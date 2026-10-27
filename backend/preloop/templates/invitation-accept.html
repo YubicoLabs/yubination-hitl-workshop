@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accept Invitation - Preloop</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.15.0/cdn/themes/light.css" />
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.15.0/cdn/shoelace.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 500px;
+            width: 100%;
+        }
+
+        sl-card {
+            --padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.8rem;
+            color: #333;
+        }
+
+        .info-box {
+            padding: 1rem;
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .info-label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #0c4a6e;
+            margin-bottom: 0.25rem;
+        }
+
+        .info-value {
+            color: #075985;
+            font-size: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group sl-input,
+        .form-group sl-textarea {
+            width: 100%;
+        }
+
+        .actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+
+        .actions sl-button {
+            flex: 1;
+        }
+
+        .helper-text {
+            font-size: 0.875rem;
+            color: #6b7280;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <sl-card>
+            <div class="header">
+                <h1>✉️ You're Invited!</h1>
+                <p style="color: #6b7280; margin: 0;">Create your account to join the organization</p>
+            </div>
+
+            <div id="loading" style="text-align: center;">
+                <sl-spinner style="font-size: 3rem;"></sl-spinner>
+                <p>Loading invitation...</p>
+            </div>
+
+            <div id="error" style="display: none;">
+                <sl-alert variant="danger" open>
+                    <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
+                    <strong id="error-title">Error</strong>
+                    <div id="error-message"></div>
+                </sl-alert>
+            </div>
+
+            <div id="content" style="display: none;">
+                <div class="info-box">
+                    <div class="info-label">Organization</div>
+                    <div class="info-value" id="organization-name"></div>
+                </div>
+
+                <div class="info-box">
+                    <div class="info-label">Your Email</div>
+                    <div class="info-value" id="email"></div>
+                </div>
+
+                <form id="accept-form">
+                    <div class="form-group">
+                        <sl-input name="username" label="Username" placeholder="Choose a username" required
+                            minlength="3" maxlength="50">
+                            <sl-icon name="person" slot="prefix"></sl-icon>
+                        </sl-input>
+                        <div class="helper-text">3-50 characters, alphanumeric and underscores allowed</div>
+                    </div>
+
+                    <div class="form-group">
+                        <sl-input name="full_name" label="Full Name (Optional)" placeholder="Your full name"
+                            maxlength="255">
+                            <sl-icon name="person-badge" slot="prefix"></sl-icon>
+                        </sl-input>
+                    </div>
+
+                    <div class="form-group">
+                        <sl-input name="password" type="password" label="Password"
+                            placeholder="Choose a secure password" required minlength="8" password-toggle>
+                            <sl-icon name="lock" slot="prefix"></sl-icon>
+                        </sl-input>
+                        <div class="helper-text">Minimum 8 characters</div>
+                    </div>
+
+                    <div class="form-group">
+                        <sl-input name="password_confirm" type="password" label="Confirm Password"
+                            placeholder="Re-enter your password" required minlength="8" password-toggle>
+                            <sl-icon name="lock-fill" slot="prefix"></sl-icon>
+                        </sl-input>
+                    </div>
+
+                    <div class="actions">
+                        <sl-button type="submit" variant="primary" id="accept-button">
+                            <sl-icon slot="prefix" name="check-circle"></sl-icon>
+                            Accept & Create Account
+                        </sl-button>
+                    </div>
+                </form>
+            </div>
+
+            <div id="success" style="display: none;">
+                <sl-alert variant="success" open>
+                    <sl-icon slot="icon" name="check-circle"></sl-icon>
+                    <strong>Account Created Successfully!</strong>
+                    <div>Your account has been created. Redirecting to login...</div>
+                </sl-alert>
+            </div>
+        </sl-card>
+    </div>
+
+    <script>
+        let invitationData = null;
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+
+        async function loadInvitation() {
+            if (!token) {
+                showError('Invalid Link', 'No invitation token provided in the URL.');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/invitations/public/${encodeURIComponent(token)}`);
+
+                if (!response.ok) {
+                    throw new Error('Failed to load invitation');
+                }
+
+                invitationData = await response.json();
+
+                if (!invitationData.is_valid) {
+                    showError('Invalid Invitation', invitationData.error_message || 'This invitation is no longer valid.');
+                    return;
+                }
+
+                displayInvitation();
+            } catch (error) {
+                showError('Error', error.message);
+            }
+        }
+
+        function displayInvitation() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+
+            document.getElementById('organization-name').textContent = invitationData.organization_name || 'Unknown Organization';
+            document.getElementById('email').textContent = invitationData.email || 'Unknown';
+        }
+
+        function showError(title, message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error-title').textContent = title;
+            document.getElementById('error-message').textContent = message;
+        }
+
+        function showSuccess() {
+            document.getElementById('content').style.display = 'none';
+            document.getElementById('success').style.display = 'block';
+
+            // Redirect to login after 3 seconds
+            setTimeout(() => {
+                window.location.href = '/login';
+            }, 3000);
+        }
+
+        document.getElementById('accept-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(e.target);
+            const username = formData.get('username');
+            const password = formData.get('password');
+            const password_confirm = formData.get('password_confirm');
+            const full_name = formData.get('full_name');
+
+            // Validate passwords match
+            if (password !== password_confirm) {
+                const alert = document.createElement('sl-alert');
+                alert.variant = 'warning';
+                alert.closable = true;
+                alert.duration = 3000;
+                alert.innerHTML = `
+                    <sl-icon slot="icon" name="exclamation-triangle"></sl-icon>
+                    Passwords do not match. Please try again.
+                `;
+                document.querySelector('.container').prepend(alert);
+                alert.toast();
+                return;
+            }
+
+            const button = document.getElementById('accept-button');
+            button.loading = true;
+
+            try {
+                const response = await fetch('/api/v1/invitations/accept', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        token: token,
+                        username: username,
+                        password: password,
+                        full_name: full_name || null,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Failed to accept invitation');
+                }
+
+                showSuccess();
+            } catch (error) {
+                const alert = document.createElement('sl-alert');
+                alert.variant = 'danger';
+                alert.closable = true;
+                alert.duration = 5000;
+
+                // Create structured content to prevent XSS
+                const icon = document.createElement('sl-icon');
+                icon.setAttribute('slot', 'icon');
+                icon.setAttribute('name', 'exclamation-octagon');
+
+                const strong = document.createElement('strong');
+                strong.textContent = 'Error: ';
+
+                const messageText = document.createTextNode(error.message);
+
+                alert.appendChild(icon);
+                alert.appendChild(strong);
+                alert.appendChild(messageText);
+
+                document.querySelector('.container').prepend(alert);
+                alert.toast();
+                button.loading = false;
+            }
+        });
+
+        // Load invitation on page load
+        loadInvitation();
+    </script>
+</body>
+
+</html>

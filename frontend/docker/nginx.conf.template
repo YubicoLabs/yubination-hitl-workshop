@@ -1,0 +1,218 @@
+server {
+    listen 80;
+    server_name localhost;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+
+    # Root directory for static files
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # API proxy configuration
+    location /api/ {
+        # Choose API backend based on MOCK_API environment variable
+        set $api_backend "${API_URL}";
+
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+
+        # CORS headers for API requests
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
+        add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+
+        # Handle preflight requests
+        if ($request_method = 'OPTIONS') {
+            add_header 'Access-Control-Allow-Origin' '*';
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS';
+            add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization';
+            add_header 'Access-Control-Max-Age' 1728000;
+            add_header 'Content-Type' 'text/plain; charset=utf-8';
+            add_header 'Content-Length' 0;
+            return 204;
+        }
+    }
+
+    # MCP server proxy configuration
+    # Use prefix match with ^~ to stop searching and prevent SPA catch-all
+    # /mcp → /mcp/v1 rewrite is handled by the backend's ASGI middleware
+    location ^~ /mcp {
+        set $api_backend "${API_URL}";
+
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # OpenAI-compatible model gateway endpoints
+    location ^~ /openai/ {
+        set $gateway_backend "${GATEWAY_URL}";
+
+        proxy_pass $gateway_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Anthropic-compatible model gateway endpoints
+    location ^~ /anthropic/ {
+        set $gateway_backend "${GATEWAY_URL}";
+
+        proxy_pass $gateway_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Gemini-compatible model gateway endpoints
+    location ^~ /gemini/ {
+        set $gateway_backend "${GATEWAY_URL}";
+
+        proxy_pass $gateway_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # OAuth server endpoints (authorize, token, register, revoke)
+    # Must be proxied to backend before the SPA catch-all
+    location ^~ /oauth/ {
+        set $api_backend "${API_URL}";
+
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # OAuth / MCP well-known discovery endpoints
+    location ^~ /.well-known/ {
+        set $api_backend "${API_URL}";
+
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Invitation accept page proxy configuration (public invitation accept)
+    # Use prefix match with ^~ to stop searching and prevent SPA catch-all
+    location ^~ /invitations/accept {
+        set $api_backend "${API_URL}";
+
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Public approval endpoints (token-based, no /api/ prefix)
+    location ^~ /approval/ {
+        set $api_backend "${API_URL}";
+
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Public installer endpoints
+    location ^~ /install/ {
+        set $api_backend "${API_URL}";
+
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Static files with caching
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    location = /about {
+        try_files /about.html =404;
+    }
+
+    location = /pricing {
+        try_files /pricing.html =404;
+    }
+
+    location = /privacy {
+        try_files /privacy.html =404;
+    }
+
+    location = /terms {
+        try_files /terms.html =404;
+    }
+
+    location = /whatis-mcp {
+        try_files /whatis-mcp.html =404;
+    }
+
+    location = /robots.txt {
+        try_files /robots.txt =404;
+    }
+
+    location = /sitemap.xml {
+        try_files /sitemap.xml =404;
+    }
+
+    location = /llms.txt {
+        try_files /llms.txt =404;
+    }
+
+    # SPA routing - serve index.html for all non-API routes
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Disable caching for index.html
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}

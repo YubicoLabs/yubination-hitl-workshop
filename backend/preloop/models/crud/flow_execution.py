@@ -1,0 +1,380 @@
+import uuid
+from typing import List, Optional, Any
+
+from sqlalchemy.orm import Session, joinedload, load_only
+from sqlalchemy.future import select
+
+from preloop.models.models.flow_execution import FlowExecution
+from preloop.models.models.flow import Flow
+from preloop.models.schemas.flow_execution import (
+    FlowExecutionCreate,
+    FlowExecutionUpdate,
+)
+from .base import CRUDBase
+
+
+async def get_flow_execution(
+    db: Session, flow_execution_id: uuid.UUID
+) -> Optional[FlowExecution]:
+    """
+    Retrieve a flow execution by its ID.
+    """
+    result = await db.execute(
+        select(FlowExecution).filter(FlowExecution.id == flow_execution_id)
+    )
+    return result.scalars().first()
+
+
+async def get_flow_executions_by_flow(
+    db: Session,
+    flow_id: uuid.UUID,
+    skip: int = 0,
+    limit: int = 100,
+    account_id: Optional[str] = None,
+) -> List[FlowExecution]:
+    """
+    Retrieve flow executions for a specific flow.
+    """
+    query = (
+        select(FlowExecution)
+        .filter(FlowExecution.flow_id == flow_id)
+        .order_by(FlowExecution.start_time.desc())
+    )
+    if account_id:
+        query = query.join(Flow).filter(Flow.account_id == account_id)
+
+    result = await db.execute(query.offset(skip).limit(limit))
+    return result.scalars().all()
+
+
+async def create_flow_execution(
+    db: Session, flow_execution_in: FlowExecutionCreate
+) -> FlowExecution:
+    """
+    Create a new flow execution.
+    This is typically called by the Flow Trigger Service.
+    """
+    db_flow_execution = FlowExecution(**flow_execution_in.model_dump())
+    db.add(db_flow_execution)
+    await db.commit()
+    await db.refresh(db_flow_execution)
+    return db_flow_execution
+
+
+async def update_flow_execution(
+    db: Session, flow_execution: FlowExecution, flow_execution_in: FlowExecutionUpdate
+) -> FlowExecution:
+    """
+    Update an existing flow execution.
+    This is typically called by the Flow Execution Orchestrator to update status, logs, etc.
+    """
+    update_data = flow_execution_in.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(flow_execution, field, value)
+
+    await db.commit()
+    await db.refresh(flow_execution)
+    return flow_execution
+
+
+async def delete_flow_execution(
+    db: Session, flow_execution_id: uuid.UUID
+) -> Optional[FlowExecution]:
+    """
+    Delete a flow execution (primarily for cleanup or testing, not a standard operation).
+    """
+    db_flow_execution = await get_flow_execution(db, flow_execution_id)
+    if db_flow_execution:
+        await db.delete(db_flow_execution)
+        await db.commit()
+    return db_flow_execution
+
+
+class CRUDFlowExecution(CRUDBase[FlowExecution]):
+    """CRUD operations for FlowExecution model."""
+
+    def __init__(self):
+        """Initialize with the FlowExecution model."""
+        super().__init__(model=FlowExecution)
+
+    def get(
+        self, db: Session, id: Any, *, account_id: Optional[str] = None
+    ) -> Optional[FlowExecution]:
+        """Get flow execution by ID.
+
+        Overrides base get to properly filter by account_id through Flow relationship.
+        """
+        query = db.query(FlowExecution).filter(FlowExecution.id == id)
+        if account_id:
+            query = query.join(Flow).filter(Flow.account_id == account_id)
+        return query.first()
+
+    def create(self, db: Session, obj_in: FlowExecutionCreate) -> FlowExecution:
+        """Create a new flow execution (synchronous)."""
+        db_obj = FlowExecution(**obj_in.model_dump())
+        db.add(db_obj)
+        db.flush()  # Use flush instead of commit to stay in transaction
+        return db_obj
+
+    def update(
+        self, db: Session, db_obj: FlowExecution, obj_in: FlowExecutionUpdate
+    ) -> FlowExecution:
+        """Update an existing flow execution (synchronous)."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        update_data = obj_in.model_dump(exclude_unset=True)
+
+        # Debug logging for metrics updates
+        if "tool_calls_count" in update_data or "total_tokens" in update_data:
+            logger.info(
+                f"CRUD update - Setting metrics on FlowExecution {db_obj.id}: "
+                f"tool_calls_count={update_data.get('tool_calls_count')}, "
+                f"total_tokens={update_data.get('total_tokens')}, "
+                f"estimated_cost={update_data.get('estimated_cost')}"
+            )
+            logger.info(
+                f"Current DB values before update: tool_calls_count={db_obj.tool_calls_count}, "
+                f"total_tokens={db_obj.total_tokens}, estimated_cost={db_obj.estimated_cost}"
+            )
+
+        for field, value in update_data.items():
+            setattr(db_obj, field, value)
+
+        db.flush()  # Use flush instead of commit to stay in transaction
+
+        # Debug logging after flush
+        if "tool_calls_count" in update_data or "total_tokens" in update_data:
+            logger.info(
+                f"After flush: tool_calls_count={db_obj.tool_calls_count}, "
+                f"total_tokens={db_obj.total_tokens}, estimated_cost={db_obj.estimated_cost}"
+            )
+
+        return db_obj
+
+    def get_by_flow(
+        self,
+        db: Session,
+        flow_id: uuid.UUID,
+        skip: int = 0,
+        limit: int = 100,
+        account_id: Optional[str] = None,
+    ) -> List[FlowExecution]:
+        """Get flow executions for a specific flow (synchronous)."""
+        query = (
+            db.query(FlowExecution)
+            .filter(FlowExecution.flow_id == flow_id)
+            .order_by(FlowExecution.start_time.desc())
+        )
+        if account_id:
+            query = query.join(Flow).filter(Flow.account_id == account_id)
+        return query.offset(skip).limit(limit).all()
+
+    def get_running_by_flow(
+        self,
+        db: Session,
+        flow_id: uuid.UUID,
+        account_id: Optional[uuid.UUID] = None,
+        running_statuses: Optional[List[str]] = None,
+    ) -> List[FlowExecution]:
+        """Get running flow executions for a specific flow.
+
+        Unlike get_by_flow, this specifically queries for executions in running states
+        without a limit, ensuring long-running executions are not missed.
+
+        Args:
+            db: Database session
+            flow_id: The flow ID to query
+            account_id: Optional account ID to filter by
+            running_statuses: List of statuses considered "running".
+                             Defaults to ["PENDING", "INITIALIZING", "STARTING", "RUNNING"]
+
+        Returns:
+            List of flow executions in running states
+        """
+        if running_statuses is None:
+            running_statuses = ["PENDING", "INITIALIZING", "STARTING", "RUNNING"]
+
+        query = db.query(FlowExecution).filter(
+            FlowExecution.flow_id == flow_id,
+            FlowExecution.status.in_(running_statuses),
+        )
+        if account_id:
+            query = query.join(Flow).filter(Flow.account_id == account_id)
+        return query.all()
+
+    def get_multi(
+        self,
+        db: Session,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        account_id: Optional[str] = None,
+        flow_id: Optional[Any] = None,
+        statuses: Optional[List[str]] = None,
+        eager_load: bool = False,
+        lightweight: bool = False,
+        **filters,
+    ) -> List[FlowExecution]:
+        """Get multiple flow executions with optional filtering.
+
+        Overrides base get_multi to properly filter by account_id through Flow relationship.
+
+        Args:
+            eager_load: If True, eagerly load the flow relationship to avoid N+1 queries.
+            lightweight: If True, defer heavy text/JSON columns used only by detail views.
+        """
+        query = db.query(FlowExecution)
+
+        if lightweight:
+            query = query.options(
+                load_only(
+                    FlowExecution.id,
+                    FlowExecution.flow_id,
+                    FlowExecution.status,
+                    FlowExecution.start_time,
+                    FlowExecution.end_time,
+                    FlowExecution.error_message,
+                    FlowExecution.retry_of_execution_id,
+                    FlowExecution.tool_calls_count,
+                    FlowExecution.total_tokens,
+                    FlowExecution.estimated_cost,
+                    FlowExecution.created_at,
+                    FlowExecution.updated_at,
+                )
+            )
+
+        # Eagerly load flow relationship to avoid N+1 queries
+        if eager_load:
+            flow_loader = joinedload(FlowExecution.flow)
+            if lightweight:
+                flow_loader = flow_loader.load_only(Flow.id, Flow.name)
+            query = query.options(flow_loader)
+
+        # Filter by account_id through the Flow relationship
+        if account_id:
+            query = query.join(Flow).filter(Flow.account_id == account_id)
+
+        if flow_id:
+            query = query.filter(FlowExecution.flow_id == flow_id)
+
+        if statuses:
+            query = query.filter(FlowExecution.status.in_(statuses))
+
+        # Apply any additional filters
+        for key, value in filters.items():
+            if hasattr(FlowExecution, key):
+                query = query.filter(getattr(FlowExecution, key) == value)
+
+        # Order by start_time descending (most recent first)
+        query = query.order_by(FlowExecution.start_time.desc())
+
+        return query.offset(skip).limit(limit).all()
+
+    def get_by_statuses(
+        self, db: Session, statuses: List[str], account_id: Optional[str] = None
+    ) -> List[FlowExecution]:
+        """Get flow executions filtered by status list."""
+        query = db.query(FlowExecution).filter(FlowExecution.status.in_(statuses))
+        if account_id:
+            query = query.join(Flow).filter(Flow.account_id == account_id)
+        return query.all()
+
+    def get_execution_stats_for_flows(
+        self, db: Session, flow_ids: List[Any]
+    ) -> List[Any]:
+        """Get execution statistics for a list of flow IDs."""
+        if not flow_ids:
+            return []
+
+        from sqlalchemy import func, case
+        from preloop.models.models.api_usage import ApiUsage
+
+        # Fetch execution stats
+        exec_stats = (
+            db.query(
+                self.model.flow_id,
+                func.count(self.model.id).label("total_execs"),
+                func.sum(
+                    case(
+                        (
+                            self.model.status.in_(
+                                ["PENDING", "INITIALIZING", "STARTING", "RUNNING"]
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("running_execs"),
+                func.max(self.model.updated_at).label("last_seen_at"),
+            )
+            .filter(self.model.flow_id.in_(flow_ids))
+            .group_by(self.model.flow_id)
+            .all()
+        )
+
+        # Fetch cost stats from actual API usage
+        cost_stats = (
+            db.query(
+                ApiUsage.flow_id,
+                func.coalesce(func.sum(ApiUsage.estimated_cost), 0.0).label(
+                    "estimated_cost"
+                ),
+            )
+            .filter(
+                ApiUsage.flow_id.in_(flow_ids),
+                ApiUsage.action_type == "model_gateway",
+            )
+            .group_by(ApiUsage.flow_id)
+            .all()
+        )
+
+        cost_map = {str(row.flow_id): row.estimated_cost for row in cost_stats}
+
+        class FlowStatResponse:
+            def __init__(self, row):
+                self.flow_id = row.flow_id
+                self.total_execs = row.total_execs
+                self.running_execs = row.running_execs
+                self.last_seen_at = row.last_seen_at
+                self.estimated_cost = cost_map.get(str(row.flow_id), 0.0)
+
+        return [FlowStatResponse(row) for row in exec_stats]
+
+    def append_log(
+        self, db: Session, execution_id: str, log_data: dict, *, commit: bool = True
+    ) -> None:
+        """Append a log entry to the flow_execution_log table.
+
+        Uses a simple INSERT instead of rewriting the JSONB execution_logs
+        column, avoiding O(n) write amplification per append.
+
+        Args:
+            db: Database session
+            execution_id: ID of the flow execution
+            log_data: Log message data to append
+            commit: If True (default), commit after the insert. Set to
+                False when batching many entries and commit manually
+                after the loop.
+        """
+        from preloop.models.models.flow_execution_log import FlowExecutionLog
+
+        # NATS messages nest actual content under "payload" (e.g. payload.line
+        # for agent_log_line).  Derive message from the best available field
+        # and persist the full payload as metadata so nothing is lost.
+        payload = log_data.get("payload") or {}
+        message = (
+            log_data.get("message") or payload.get("line") or payload.get("message")
+        )
+        metadata = payload or log_data.get("metadata") or log_data.get("data")
+
+        log_entry = FlowExecutionLog(
+            execution_id=execution_id,
+            log_type=log_data.get("type", "log"),
+            message=message,
+            metadata_=metadata if metadata else None,
+        )
+        db.add(log_entry)
+        if commit:
+            db.commit()

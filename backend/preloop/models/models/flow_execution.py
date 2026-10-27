@@ -1,0 +1,79 @@
+import uuid
+from datetime import datetime, UTC
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
+
+from .base import Base
+
+
+class FlowExecution(Base):
+    __tablename__ = "flow_execution"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    flow_id = Column(
+        UUID(as_uuid=True), ForeignKey("flow.id"), nullable=False, index=True
+    )
+    trigger_event_id = Column(
+        String, nullable=True, index=True
+    )  # From StandardizedNatsEvent.event_id
+    trigger_event_details = Column(
+        JSONB, nullable=True
+    )  # Snapshot of StandardizedNatsEvent.data or full event
+    status = Column(
+        String, nullable=False, default="PENDING", index=True
+    )  # PENDING, INITIALIZING, RUNNING, etc.
+    start_time = Column(DateTime, default=datetime.now(UTC), nullable=False, index=True)
+    end_time = Column(DateTime, nullable=True)
+    resolved_input_prompt = Column(Text, nullable=True)
+    model_output_summary = Column(Text, nullable=True)
+    actions_taken_summary = Column(
+        JSONB, nullable=True
+    )  # Structured log of agent actions
+    mcp_usage_logs = Column(JSONB, nullable=True)  # Detailed log of MCP tool calls
+    execution_logs = Column(
+        JSONB, nullable=True
+    )  # Full execution logs (array of log messages)
+    agent_session_reference = Column(
+        String, nullable=True
+    )  # e.g., agent session ID, K8s job ID, Docker container ID, process ID
+    error_message = Column(Text, nullable=True)
+
+    # Retry tracking
+    retry_of_execution_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("flow_execution.id"),
+        nullable=True,
+        index=True,
+    )  # Links to the original execution this is a retry of
+
+    # Execution metrics
+    tool_calls_count = Column(
+        Integer, nullable=True, default=0
+    )  # Total number of tool/MCP calls made
+    total_tokens = Column(
+        Integer, nullable=True, default=0
+    )  # Total tokens used (input + output)
+    estimated_cost = Column(
+        Numeric(10, 4), nullable=True, default=0.0
+    )  # Estimated cost in USD
+
+    created_at = Column(DateTime, default=datetime.now(UTC), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.now(UTC),
+        onupdate=datetime.now(UTC),
+        nullable=False,
+    )
+
+    # Relationships
+    flow = relationship(
+        "Flow", back_populates="executions"
+    )  # Assuming Flow model has 'executions'
+    log_entries = relationship(
+        "FlowExecutionLog", back_populates="execution", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self):
+        return f"<FlowExecution(id={self.id}, flow_id={self.flow_id}, status='{self.status}')>"

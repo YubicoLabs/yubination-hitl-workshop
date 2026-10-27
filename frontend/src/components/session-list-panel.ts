@@ -1,0 +1,167 @@
+import { LitElement, css, html } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
+import '@shoelace-style/shoelace/dist/components/badge/badge.js';
+import '@shoelace-style/shoelace/dist/components/icon/icon.js';
+import type { ObservedSession } from '../utils/session-observer';
+import { formatCost, formatNumber } from '../utils/session-observer';
+
+@customElement('session-list-panel')
+export class SessionListPanel extends LitElement {
+  @property({ type: Array })
+  sessions: ObservedSession[] = [];
+
+  @property({ type: String })
+  activeSessionId: string | null = null;
+
+  static styles = css`
+    :host {
+      display: block;
+      min-height: 0;
+    }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sl-spacing-small);
+    }
+
+    .session-card {
+      appearance: none;
+      border: 1px solid var(--sl-color-neutral-200);
+      border-radius: var(--sl-border-radius-medium);
+      background: var(--sl-color-neutral-0);
+      color: inherit;
+      cursor: pointer;
+      padding: var(--sl-spacing-small) var(--sl-spacing-medium);
+      text-align: left;
+      transition:
+        border-color 0.15s ease,
+        background 0.15s ease,
+        box-shadow 0.15s ease;
+      width: 100%;
+    }
+
+    .session-card:hover,
+    .session-card.active {
+      background: var(--sl-color-primary-50);
+      border-color: var(--sl-color-primary-500);
+    }
+
+    .session-card.active {
+      box-shadow: 0 0 0 1px var(--sl-color-primary-500);
+    }
+
+    .title-row,
+    .metric-row {
+      align-items: center;
+      display: flex;
+      gap: var(--sl-spacing-small);
+      justify-content: space-between;
+    }
+
+    .title {
+      color: var(--sl-color-neutral-900);
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+
+    .meta {
+      color: var(--sl-color-neutral-600);
+      font-size: var(--sl-font-size-small);
+      margin-top: var(--sl-spacing-2x-small);
+      overflow-wrap: anywhere;
+    }
+
+    .metric {
+      color: var(--sl-color-primary-700);
+      font-size: var(--sl-font-size-small);
+      font-weight: 600;
+      margin-top: var(--sl-spacing-2x-small);
+    }
+
+    .empty {
+      color: var(--sl-color-neutral-600);
+      padding: var(--sl-spacing-large);
+      text-align: center;
+    }
+  `;
+
+  private getVariant(session: ObservedSession) {
+    if (session.status === 'active_now') return 'success';
+    if (session.status === 'ended') return 'neutral';
+    if (session.failedRequests > 0) return 'warning';
+    return 'primary';
+  }
+
+  private getLabel(session: ObservedSession): string {
+    if (session.status === 'active_now') return 'Active now';
+    if (session.status === 'ended') return 'Ended';
+    if (session.status === 'recently_active') return 'Recently active';
+    return 'Idle';
+  }
+
+  private formatDate(value: string | null): string {
+    if (!value) return 'No activity yet';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString();
+  }
+
+  private selectSession(session: ObservedSession): void {
+    this.dispatchEvent(
+      new CustomEvent('session-selected', {
+        detail: { sessionId: session.id },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  render() {
+    if (!this.sessions.length) {
+      return html`<div class="empty">
+        No sessions recorded for this scope.
+      </div>`;
+    }
+
+    return html`
+      <div class="list">
+        ${repeat(
+          this.sessions,
+          (session) => session.id,
+          (session) => html`
+            <button
+              class="session-card ${this.activeSessionId === session.id
+                ? 'active'
+                : ''}"
+              @click=${() => this.selectSession(session)}
+            >
+              <div class="title-row">
+                <div class="title">${session.title}</div>
+                <sl-badge variant=${this.getVariant(session)} pill>
+                  ${this.getLabel(session)}
+                </sl-badge>
+              </div>
+              ${session.subtitle
+                ? html`<div class="meta">${session.subtitle}</div>`
+                : ''}
+              <div class="meta">
+                Last activity ${this.formatDate(session.lastActivityAt)}
+              </div>
+              <div class="metric-row">
+                <div class="metric">
+                  ${formatNumber(session.totalRequests)} requests
+                </div>
+                <div class="metric">
+                  ${formatNumber(session.tokenUsage.total_tokens)} tokens ·
+                  ${formatCost(session.estimatedCost)}
+                </div>
+              </div>
+            </button>
+          `
+        )}
+      </div>
+    `;
+  }
+}

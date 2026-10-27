@@ -1,0 +1,35 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+html {
+  --console-container-max-width: 960px;
+  --console-container-large-max-width: 1200px;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sl-spacing-large);
+}
+
+/* Shared Table Styles */
+.table-card {
+  width: 100%;
+  --padding: 0;
+}
+
+.actions-cell sl-button {
+  margin-left: var(--sl-spacing-x-small);
+}
+
+.issue-key {
+  font-weight: bold;
+  color: #555;
+}
+
+.issue-title {
+  margin-top: 4px;
+}

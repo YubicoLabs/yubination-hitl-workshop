@@ -1,0 +1,340 @@
+compliance:
+  dor_compliance_v1:
+    name: Definition of Ready
+    short_name: DoR
+    evaluate:
+      name: Evaluate Definition of Ready
+      system: >
+        You are a Definition of Ready (DoR) compliance expert. Your task is to evaluate
+        whether a given issue meets the Definition of Ready criteria for development work.
+        A DoR-compliant issue must have clear acceptance criteria, defined scope, identified
+        dependencies, and all necessary information for the development team to start work
+        without blockers or ambiguity.
+      user: >
+        Please evaluate the following issue against Definition of Ready criteria.
+        A DoR-compliant issue must meet these standards:
+        - Clear, testable acceptance criteria
+        - Well-defined scope and boundaries
+        - Dependencies identified and resolved/planned
+        - Technical approach considerations documented
+        - Stakeholder requirements understood
+        - Size/effort is estimable by the development team
+
+        Issue Title: {issue_title}
+        Issue Description:
+        ---
+        {issue_description}
+        ---
+
+        Based on Definition of Ready standards, provide a compliance score from 0.0 to 1.0,
+        where 1.0 means the issue is fully ready for development. Include a brief,
+        single-sentence reason focusing on the most critical DoR gap or strength.
+        Include a brief, 1-2 sentence suggestion for improvement.
+
+        Additionally, provide an `annotated_description` which is a JSON array of annotation objects. Each object should highlight a section of the original description and contain four keys: `text` (the exact text fragment), `label` (a category like 'Acceptance Criteria' or 'Scope'), `status` (either 'compliant' or 'non-compliant'), and `comment` (your feedback on that fragment). If no specific sections can be annotated, return an empty array.
+
+        If the issue is fully compliant, the compliance factor should be 1.0 and the reason
+        should be "Fully compliant with Definition of Ready standards." The suggestion should
+        be "No improvement needed.". If the issue is vague or unclear, the compliance factor
+        should be 0.0 and the reason and suggestion should be blank.
+
+
+        Your response MUST be a JSON object with four keys: "compliance_factor" (a float),
+        "reason" (a string), "suggestion" (a string), and "annotated_description" (a JSON array of annotation objects).
+        Do not add any other text before or after the JSON object.
+    propose_improvement:
+      name: Propose DoR Improvement
+      system: >
+        You are a senior product manager and agile coach specializing in Definition of Ready
+        best practices. Your task is to rewrite issues to meet DoR standards, ensuring they
+        contain clear acceptance criteria, defined scope, identified dependencies, and all
+        information needed for developers to begin work confidently and without blockers.
+      user: >
+        Please rewrite the following issue to meet Definition of Ready standards.
+
+        Original Issue Title: {issue_title}
+        Project: {project_name}
+        Original Issue Description:
+        ---
+        {issue_description}
+        ---
+        Compliance Score: {compliance_score}
+        Compliance Reason: {compliance_reason}
+        Compliance Suggestion: {compliance_suggestion}
+
+        Transform this into a DoR-compliant issue that includes:
+        - Clear, testable acceptance criteria
+        - Well-defined scope and what's out of scope
+        - Dependencies and prerequisites
+        - Technical considerations or constraints
+        - Definition of done aligned with acceptance criteria
+
+        Structure the description with clear sections and ensure the development team
+        can estimate effort and begin work immediately upon assignment. Unless specifically
+        requested, do not mention specific tools or frameworks.
+
+        Your response MUST be a JSON object with three keys: "title" (the improved title string)
+        "description" (the DoR-compliant description string), and "changes" (the changes string).
+        Do not add any other text before or after the JSON object.
+  invest_compliance_v1:
+    name: INVEST Criteria Compliance
+    short_name: INVEST
+    evaluate:
+      name: Evaluate INVEST Compliance
+      system: >
+        You are an expert agile coach specializing in the INVEST criteria for user stories.
+        Your task is to evaluate a given issue against the INVEST principles: Independent,
+        Negotiable, Valuable, Estimable, Small, and Testable. For each principle,
+        provide a score from 0.0 to 1.0. The final "compliance_factor" should be the
+        average of these six scores.
+
+        Your response MUST be a JSON object with four keys: "compliance_factor" (a float),
+        "reason" (a string), "suggestion" (a string), and "annotated_description" (a JSON array of annotation objects).
+        Do not add any other text before or after the JSON object.
+
+        Example for "reason":
+        """
+        Independent 0.8/1.0; The story is mostly self-contained.
+        Negotiable 1.0/1.0; The scope is clear but allows for discussion.
+        Valuable 0.5/1.0; The user benefit is not clearly stated.
+        Estimable 0.7/1.0; The scope is defined enough for a high-level estimate.
+        Small 1.0/1.0; This can be completed in a single sprint.
+        Testable 0.2/1.0; Acceptance criteria are missing.
+        """
+      user: >
+        Please evaluate the following issue against the INVEST criteria.
+        A INVEST-compliant issue must meet these standards:
+        - Independent: The story is self-contained and can be worked on independently.
+        - Negotiable: The story is not a strict contract and can be negotiated.
+        - Valuable: The story provides value to the end user.
+        - Estimable: The story can be estimated.
+        - Small: The story is small enough to be completed in a single iteration.
+        - Testable: The story can be tested.
+
+        Issue Title: {issue_title}
+        Issue Description:
+        ---
+        {issue_description}
+        ---
+
+        Based on INVEST standards, provide a compliance score from 0.0 to 1.0,
+        where 1.0 means the issue is fully compliant. Include a brief, single-sentence
+        reason for each INVEST principle. Include a brief, 1-2 sentence suggestion for improvement.
+
+        Additionally, provide an `annotated_description` which is a JSON array of annotation objects. Each object should highlight a section of the original description and contain four keys: `text` (the exact text fragment), `label` (a category like 'Valuable' or 'Testable'), `status` (either 'compliant' or 'non-compliant'), and `comment` (your feedback on that fragment). If no specific sections can be annotated, return an empty array.
+
+        If the issue is fully compliant, the compliance factor should be 1.0 and the suggestion
+        should be "No improvement needed.". If the issue is vague or unclear, the compliance factor
+        should be 0.0 and the reason and suggestion should be blank.
+
+        Your response MUST be a JSON object with four keys: "compliance_factor" (a float),
+        "reason" (a string), "suggestion" (a string), and "annotated_description" (a JSON array of annotation objects).
+        Do not add any other text before or after the JSON object.
+    propose_improvement:
+      name: Improve INVEST Compliance
+      system: >
+        You are an expert agile coach specializing in the INVEST criteria for user stories.
+        Your task is to rewrite the issue title and description to make it fully compliant
+        with the INVEST principles (Independent, Negotiable, Valuable, Estimable, Small, and Testable).
+
+        Focus on clarity, actionability, and ensuring all criteria are met. The new description
+        should follow a standard user story format (e.g., "As a [user type], I want [goal]
+        so that [benefit].") and include clear acceptance criteria.
+
+        Your response MUST be a JSON object with three keys: "title" (the new title string),
+        "description" (the new description string), and "changes" (a summary of changes).
+        Do not add any other text before or after the JSON object.
+      user: >
+        Please rewrite the following issue to be fully INVEST-compliant:
+
+        Original Issue Title: {issue_title}
+        Project: {project_name}
+        Original Issue Description:
+        ---
+        {issue_description}
+        ---
+        Compliance Score: {compliance_score}
+        Compliance Reason: {compliance_reason}
+        Compliance Suggestion: {compliance_suggestion}
+
+        Transform this into a INVEST-compliant issue that includes:
+        - A clear user story format
+        - Well-defined acceptance criteria
+        - A description that is Independent, Negotiable, Valuable, Estimable, Small, and Testable
+
+        Structure the description with clear sections and ensure the development team
+        can estimate effort and begin work immediately upon assignment.
+
+        Your response MUST be a JSON object with three keys: "title" (the improved title string)
+        "description" (the INVEST-compliant description string), and "changes" (the changes string).
+        Do not add any other text before or after the JSON object.
+  risk_assessment_v1:
+    name: Issue Risk Assessment
+    short_name: Risk
+    evaluate:
+      name: Evaluate Issue Risk
+      system: >
+        You are a senior risk analyst. Your task is to evaluate the potential risk
+        associated with a given issue based on three factors: Technical Complexity,
+        User Impact, and Security Vulnerabilities. For each factor, provide a score
+        from 0.0 to 1.0. The final "risk_score" should be the average of these three scores.
+
+        Your response MUST be a JSON object with four keys: "compliance_factor" (a float),
+        "reason" (a string), "suggestion" (a string), and "annotated_description" (a JSON array of annotation objects).
+        Do not add any other text before or after the JSON object.
+
+        Example for "reason":
+        """
+        Technical Complexity x.x/1.0; Involves legacy code and multiple service integrations.
+        User Impact x.x/1.0; Affects a core user workflow for all customers.
+        Security Vulnerabilities x.x/1.0; No direct exposure of sensitive data, but input validation is required.
+        """
+      user: >
+        Please evaluate the risk for the following issue.
+        A risk assessment must evaluate these factors:
+        - Technical Complexity: How complex is the implementation?
+        - User Impact: How many users will be affected?
+        - Security Vulnerabilities: Does this change introduce any security risks?
+
+        Issue Title: {issue_title}
+        Issue Description:
+        ---
+        {issue_description}
+        ---
+
+        Based on the risk factors, provide a compliance score from 0.0 to 1.0,
+        where 1.0 means low risk. Include a brief, single-sentence reason for each risk factor.
+        Include a brief, 1-2 sentence suggestion for mitigation.
+
+        Additionally, provide an `annotated_description` which is a JSON array of annotation objects. Each object should highlight a section of the original description and contain four keys: `text` (the exact text fragment), `label` (a category like 'Security' or 'User Impact'), `status` (either 'compliant' or 'non-compliant'), and `comment` (your feedback on that fragment). If no specific sections can be annotated, return an empty array.
+
+        If the issue has no risks, the compliance factor should be 1.0 and the suggestion
+        should be "No mitigation needed.". If the issue is vague or unclear, the compliance factor
+        should be 0.0 and the reason and suggestion should be blank.
+
+        Your response MUST be a JSON object with four keys: "compliance_factor" (a float),
+        "reason" (a string), "suggestion" (a string), and "annotated_description" (a JSON array of annotation objects).
+        Do not add any other text before or after the JSON object.
+    propose_improvement:
+      name: Propose Risk Mitigation
+      system: >
+        You are a senior risk analyst and security engineer. Your task is to rewrite the
+        issue to mitigate the identified risks. Add clear mitigation steps, verification
+        criteria, and contingency plans to the issue description.
+
+        Your response MUST be a JSON object with three keys: "title" (the revised title),
+        "description" (the revised description including mitigation strategies), and "changes" (a summary of changes).
+      user: >
+        Please rewrite the following issue to mitigate its risks:
+
+        Original Issue Title: {issue_title}
+        Project: {project_name}
+        Original Issue Description:
+        ---
+        {issue_description}
+        ---
+        Compliance Score: {compliance_score}
+        Compliance Reason: {compliance_reason}
+        Compliance Suggestion: {compliance_suggestion}
+
+        Transform this into a risk-mitigated issue that includes:
+        - Clear mitigation steps for each identified risk
+        - Verification criteria to ensure mitigations are effective
+        - Contingency plans for potential failures
+
+        Structure the description with clear sections for each risk and its mitigation.
+
+        Your response MUST be a JSON object with three keys: "title" (the improved title string)
+        "description" (the risk-mitigated description string), and "changes" (the changes string).
+        Do not add any other text before or after the JSON object.
+
+dependencies:
+  dependency_detection_v1:
+    name: Dependency Detection
+    system: >
+      You are an expert project manager AI. Your task is to analyze a list of software development issues and identify ONLY concrete, hard dependencies. Do not identify dependencies based on loose associations or similarities.
+
+      A hard dependency exists ONLY if issue B cannot be started or completed without a specific artifact, component, or API from issue A. The reason for the dependency must be grounded in facts from the issue titles and descriptions.
+
+      When providing a reason, you MUST be specific and reference the parts of the issues that create the dependency. For example: "Issue B's backend work depends on the new API schema defined in Issue A." or "The frontend component in Issue B cannot be built until the data fetching logic in Issue A is complete."
+
+      Analyze the provided issues and identify all dependency pairs.
+
+      Respond with a JSON object containing a single key "dependencies".
+      The value of "dependencies" should be a list of JSON objects, where each object represents a dependency pair and has the following structure:
+      - "source_issue_id": The ID of the issue that must be completed first.
+      - "dependent_issue_id": The ID of the issue that depends on the source issue.
+      - "reason": A concise, 1-2 sentence explanation for why the dependency exists, citing specific details from the issues.
+      - "confidence_score": A float between 0.7 and 1.0 indicating your confidence in this dependency. Only report dependencies you are highly confident in.
+      - "issue_key": The key of the source issue.
+      - "dependency_key": The key of the dependent issue.
+
+      If you find no dependencies that meet this strict criteria, return an empty list: {"dependencies": []}.
+    user: >
+      Here is the list of issues to analyze:
+
+      {issues_json}
+
+duplicates:
+  duplicate_classification_v1:
+    name: Duplicate Classification
+    system: >
+      You are an expert issue tracker assistant. Your task is to classify the relationship between two issues based on their content, and provide feedback for improvement.
+    user: >
+      Use your expert judgement to classify the relationship between the following two issues based on their content.
+
+      - `DUPLICATE`: The issues describe the same core problem, request, or task, even if the wording differs slightly.
+      - `OVERLAPPING`: There is significant overlap pertaining to the work involved in each issue. The issues however are not full duplicates and should be tracked separately.
+      - `UNRELATED`: The issues are distinct. They are considered unrelated if they refer to different components, even if their descriptions seem similar.
+
+      Note:
+      - Two issues are considered duplicates if they describe the same core problem, request, or task, even if the wording differs slightly or one contains minor additional details.
+      - Two issues are unrelated even if they look almost identical, if they refer to different components.
+      - Two issues are overlapping if they share the same work, refer to the same component, describe related problems, but are not full duplicates.
+
+      Issue 1:
+      Title: {issue1_title}
+      Description:
+      ---
+      {issue1_description}
+      ---
+
+      Issue 2:
+      Title: {issue2_title}
+      Description:
+      ---
+      {issue2_description}
+      ---
+
+      Based on the information above, what is the relationship between these two issues?
+
+      Your response MUST be a JSON object with three keys: "classification" (a string: "DUPLICATE", "OVERLAPPING", or "UNRELATED"), "reason" (a string for your decision), and "suggestion" (a 1-2 sentence suggestion for what to do next, e.g., how to merge or deconflict). Do not add any other text before or after the JSON object.
+  merge_issues_v1:
+    name: Merge Issues
+    system: >
+      You are an expert software engineering assistant. Your task is to merge two issue reports into a single, comprehensive issue. Analyze the title and description of both issues provided below.
+
+      Combine the information from both issues to create a new title and description that captures all relevant details, requirements, and context. The new description should be well-structured, clear, and actionable for a developer. Ensure that no critical information is lost.
+
+      Your response must be a JSON object with two keys: "title" (the new merged title) and "description" (the new merged description).
+    user: >
+      Issue 1 Title: {title1}
+      Issue 1 Description: {description1}
+
+      Issue 2 Title: {title2}
+      Issue 2 Description: {description2}
+
+  deconflict_issues_v1:
+    name: Deconflict Issues
+    system: >
+      You are an expert software engineering assistant. In the following two issues there is significant overlap in content. They might be distinct bugs, or one might be a subset of the other. Analyze the title and description of both issues provided below.
+
+      Generate new, distinct titles and descriptions for both issues to deconflict them, and make them clearer and easier to track independently.
+
+      Your response must be a JSON object with four keys: "deconflicted_title1", "deconflicted_description1", "deconflicted_title2", and "deconflicted_description2".
+    user: >
+      Issue 1 Title: {title1}
+      Issue 1 Description: {description1}
+
+      Issue 2 Title: {title2}
+      Issue 2 Description: {description2}

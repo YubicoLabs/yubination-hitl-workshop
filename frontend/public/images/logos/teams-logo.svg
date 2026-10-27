@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Main square blocks forming Teams logo -->
+  <rect fill="#fff" x="10" y="10" width="35" height="35" rx="3"/>
+  <rect fill="#fff" x="10" y="52" width="35" height="38" rx="3"/>
+  <rect fill="#fff" x="52" y="10" width="38" height="38" rx="3"/>
+  <rect fill="#fff" x="52" y="55" width="38" height="35" rx="3"/>
+  <!-- T letter overlay -->
+  <path fill="#000" opacity="0.3" d="M62,20 L80,20 L80,25 L73,25 L73,40 L69,40 L69,25 L62,25 Z"/>
+</svg>

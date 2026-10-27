@@ -1,0 +1,451 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 70 1000 480" width="100%" height="100%">
+    <defs>
+        <radialGradient id="bg-glow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#0f172a" />
+            <stop offset="100%" stop-color="#020617" />
+        </radialGradient>
+
+        <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+            <circle cx="2" cy="2" r="1.5" fill="#1e293b" />
+        </pattern>
+
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+
+        <g id="pkt-req">
+            <rect x="-16" y="-12" width="32" height="24" rx="4" fill="#0ea5e9" filter="url(#glow)" />
+            <text x="0" y="4" fill="#ffffff" font-size="12" font-family="monospace" font-weight="bold" text-anchor="middle">{ }</text>
+        </g>
+        <g id="pkt-ok">
+            <rect x="-16" y="-12" width="32" height="24" rx="4" fill="#10b981" filter="url(#glow)" />
+            <text x="0" y="4.5" fill="#ffffff" font-size="14" font-family="monospace" font-weight="bold" text-anchor="middle">✓</text>
+        </g>
+        <g id="pkt-rogue">
+            <rect x="-16" y="-12" width="32" height="24" rx="4" fill="#ef4444" filter="url(#glow)" />
+            <text x="0" y="4.5" fill="#ffffff" font-size="14" font-family="monospace" font-weight="bold" text-anchor="middle">!!</text>
+        </g>
+        <g id="pkt-err">
+            <rect x="-16" y="-12" width="32" height="24" rx="4" fill="#ef4444" filter="url(#glow)" />
+            <text x="0" y="4.5" fill="#ffffff" font-size="14" font-family="monospace" font-weight="bold" text-anchor="middle">✕</text>
+        </g>
+        <g id="pkt-ask">
+            <rect x="-16" y="-12" width="32" height="24" rx="4" fill="#f59e0b" filter="url(#glow)" />
+            <text x="0" y="4.5" fill="#ffffff" font-size="14" font-family="monospace" font-weight="bold" text-anchor="middle">?</text>
+        </g>
+        <g id="pkt-esc">
+            <rect x="-16" y="-12" width="32" height="24" rx="4" fill="#a855f7" filter="url(#glow)" />
+            <text x="0" y="4" fill="#ffffff" font-size="14" font-family="monospace" font-weight="bold" text-anchor="middle">↑</text>
+        </g>
+    </defs>
+
+    <style>
+        text { user-select: none; }
+        .flow-line {
+            fill: none;
+            stroke-width: 4;
+            stroke-dasharray: 8 8;
+            animation: flow 1.5s linear infinite;
+        }
+        @keyframes flow {
+            from { stroke-dashoffset: 16; }
+            to { stroke-dashoffset: 0; }
+        }
+        .float { animation: float-anim 4s ease-in-out infinite; }
+        @keyframes float-anim {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-6px); }
+        }
+    </style>
+
+    <rect width="1000" height="680" fill="url(#bg-glow)" />
+    <rect width="1000" height="680" fill="url(#grid)" />
+
+    <rect x="0" y="70" width="1000" height="480" fill="#dc2626" opacity="0" pointer-events="none">
+        <animate attributeName="opacity" values="0;0;0.15;0.15;0;0" keyTimes="0;0.429;0.43;0.499;0.50;1" dur="40s" repeatCount="indefinite"/>
+    </rect>
+
+    <g opacity="0">
+        <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+        <rect x="25" y="85" width="550" height="70" rx="8" fill="#450a0a" stroke="#ef4444" stroke-width="2" opacity="0.9"/>
+        <text x="40" y="110" fill="#fca5a5" font-family="monospace" font-size="20" font-weight="bold">BEFORE: Direct Tool Execution (Unsafe)</text>
+        <text x="40" y="135" fill="#f8fafc" font-family="sans-serif" font-size="14">AI Agents have unrestricted direct access to tools, risking catastrophic damage.</text>
+    </g>
+
+    <g opacity="0">
+        <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+        <rect x="25" y="85" width="550" height="70" rx="8" fill="#064e3b" stroke="#10b981" stroke-width="2" opacity="0.9"/>
+        <text x="40" y="110" fill="#6ee7b7" font-family="monospace" font-size="20" font-weight="bold">AFTER: Preloop MCP Firewall (Secure)</text>
+        <text x="40" y="135" fill="#f8fafc" font-family="sans-serif" font-size="14">Policy-based access control with contextual Agent &amp; Human Approvals.</text>
+    </g>
+
+    <g opacity="0">
+        <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+        <path class="flow-line" d="M 220 320 C 400 320, 500 170, 770 170" stroke="#334155">
+            <animate attributeName="stroke" values="#334155;#334155;#ef4444;#ef4444;#334155" keyTimes="0;0.259;0.26;0.499;0.50" dur="40s" repeatCount="indefinite" />
+        </path>
+        <path class="flow-line" d="M 220 320 L 770 328" stroke="#334155">
+            <animate attributeName="stroke" values="#334155;#334155;#ef4444;#ef4444;#334155" keyTimes="0;0.259;0.26;0.499;0.50" dur="40s" repeatCount="indefinite" />
+        </path>
+        <path class="flow-line" d="M 220 320 C 400 320, 500 460, 770 460" stroke="#334155">
+            <animate attributeName="stroke" values="#334155;#334155;#ef4444;#ef4444;#334155" keyTimes="0;0.259;0.26;0.499;0.50" dur="40s" repeatCount="indefinite" />
+        </path>
+        <g transform="translate(450, 320)">
+            <rect x="-50" y="-60" width="100" height="120" rx="12" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="6 6" opacity="0.4"/>
+            <text x="0" y="-10" fill="#ef4444" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle" opacity="0.5">Missing</text>
+            <text x="0" y="10" fill="#ef4444" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle" opacity="0.5">Preloop</text>
+            <text x="0" y="30" fill="#ef4444" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle" opacity="0.5">Firewall</text>
+        </g>
+    </g>
+
+    <g opacity="0">
+        <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+        <path class="flow-line" stroke="#334155" d="M 220 320 L 400 320" />
+        <path class="flow-line" stroke="#334155" d="M 500 320 C 600 320, 600 170, 770 170" />
+        <path class="flow-line" stroke="#334155" d="M 500 320 L 770 328" />
+        <path class="flow-line" stroke="#334155" d="M 500 320 C 600 320, 600 460, 770 460" />
+        <path class="flow-line" stroke="#334155" d="M 450 260 L 450 160" />
+        <path class="flow-line" stroke="#334155" d="M 490 260 L 630 145" />
+        <path class="flow-line" stroke="#334155" d="M 485 120 L 600 120" />
+    </g>
+
+    <g transform="translate(140, 319)" class="float">
+        <g opacity="0">
+            <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.249;0.25;0.499;0.50;1" dur="40s" repeatCount="indefinite" />
+            <path d="M -50 0 L -80 -15 L -80 15 Z" fill="#991b1b" stroke="#fca5a5" stroke-width="2"/>
+            <rect x="-50" y="-30" width="70" height="60" rx="20" fill="#ef4444" stroke="#fca5a5" stroke-width="2"/>
+            <line x1="-30" y1="-28" x2="-30" y2="28" stroke="#b91c1c" stroke-width="2"/>
+            <line x1="-10" y1="-30" x2="-10" y2="30" stroke="#b91c1c" stroke-width="2"/>
+            <circle cx="10" cy="-15" r="4" fill="#0f172a"/>
+            <circle cx="10" cy="15" r="4" fill="#0f172a"/>
+            <circle cx="10" cy="-15" r="1.5" fill="#38bdf8"><animate attributeName="opacity" values="1;0.2;1" dur="3s" repeatCount="indefinite"/></circle>
+            <circle cx="10" cy="15" r="1.5" fill="#38bdf8"><animate attributeName="opacity" values="1;0.2;1" dur="3s" repeatCount="indefinite"/></circle>
+            <path d="M 15 -20 C 35 -50 65 -30 55 -10 C 45 0 25 -10 15 -20 Z" fill="#ef4444" stroke="#fca5a5" stroke-width="2"/>
+            <path d="M 15 20 C 35 50 65 30 55 10 C 45 0 25 10 15 20 Z" fill="#ef4444" stroke="#fca5a5" stroke-width="2"/>
+            <path d="M 45 -15 L 60 -5 L 50 0 Z" fill="#0f172a"/>
+            <path d="M 45 15 L 60 5 L 50 0 Z" fill="#0f172a"/>
+            <path d="M 20 -25 Q 40 -45 55 -40" fill="none" stroke="#fca5a5" stroke-width="2"/>
+            <path d="M 20 25 Q 40 45 55 40" fill="none" stroke="#fca5a5" stroke-width="2"/>
+            <text x="0" y="55" fill="#fca5a5" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle">AI Agent</text>
+        </g>
+
+        <g opacity="0">
+            <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.249;0.25;0.429;0.43;1" dur="40s" repeatCount="indefinite" />
+            <animateTransform attributeName="transform" type="translate" values="0,0; -3,3; 3,-3; -3,-3; 3,3; 0,0" dur="0.15s" repeatCount="indefinite" />
+            <path d="M -50 0 L -80 -15 L -80 15 Z" fill="#4c1d95" stroke="#a855f7" stroke-width="2"/>
+            <rect x="-50" y="-30" width="70" height="60" rx="20" fill="#312e81" stroke="#a855f7" stroke-width="2"/>
+            <line x1="-30" y1="-28" x2="-30" y2="28" stroke="#4c1d95" stroke-width="2"/>
+            <line x1="-10" y1="-30" x2="-10" y2="30" stroke="#4c1d95" stroke-width="2"/>
+            <circle cx="10" cy="-15" r="5" fill="#ef4444" filter="url(#glow)"/>
+            <circle cx="10" cy="15" r="5" fill="#ef4444" filter="url(#glow)"/>
+            <circle cx="10" cy="-15" r="2" fill="#fef08a"/>
+            <circle cx="10" cy="15" r="2" fill="#fef08a"/>
+            <path d="M 15 -20 C 35 -50 65 -30 55 -10 C 45 0 25 -10 15 -20 Z" fill="#312e81" stroke="#a855f7" stroke-width="2"/>
+            <path d="M 15 20 C 35 50 65 30 55 10 C 45 0 25 10 15 20 Z" fill="#312e81" stroke="#a855f7" stroke-width="2"/>
+            <path d="M 45 -15 L 60 -5 L 50 0 Z" fill="#ef4444"/>
+            <path d="M 45 15 L 60 5 L 50 0 Z" fill="#ef4444"/>
+            <text x="0" y="55" fill="#ef4444" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle" filter="url(#glow)">COMPROMISED</text>
+        </g>
+
+        <g opacity="0">
+            <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.429;0.43;0.499;0.50;1" dur="40s" repeatCount="indefinite" />
+            <g transform="rotate(180)">
+                <path d="M -50 0 L -80 -15 L -80 15 Z" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+                <rect x="-50" y="-30" width="70" height="60" rx="20" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+                <line x1="-30" y1="-28" x2="-30" y2="28" stroke="#334155" stroke-width="2"/>
+                <line x1="-10" y1="-30" x2="-10" y2="30" stroke="#334155" stroke-width="2"/>
+                <circle cx="10" cy="-15" r="4" fill="#0f172a" stroke="#475569" stroke-width="1"/>
+                <circle cx="10" cy="15" r="4" fill="#0f172a" stroke="#475569" stroke-width="1"/>
+                <path d="M 15 -20 C 35 -50 65 -30 55 -10 C 45 0 25 -10 15 -20 Z" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+                <path d="M 15 20 C 35 50 65 30 55 10 C 45 0 25 10 15 20 Z" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+                <g stroke="#94a3b8" stroke-width="2" stroke-linecap="round">
+                    <path d="M 7 -18 L 13 -12 M 13 -18 L 7 -12" />
+                    <path d="M 7 12 L 13 18 M 13 12 L 7 18" />
+                </g>
+            </g>
+            <text x="0" y="65" fill="#64748b" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle">OFFLINE</text>
+            <circle cx="0" cy="0" r="10" fill="#94a3b8" opacity="0.5" filter="url(#glow)">
+                <animate attributeName="cy" values="0;-40;0" dur="2s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="0.5;0;0.5" dur="2s" repeatCount="indefinite"/>
+                <animate attributeName="r" values="10;20;10" dur="2s" repeatCount="indefinite"/>
+            </circle>
+        </g>
+    </g>
+
+    <g transform="translate(830, 170)">
+        <rect x="-60" y="-35" width="120" height="70" rx="8" fill="#1e293b" stroke="#334155" stroke-width="2" />
+        <rect x="-50" y="-20" width="100" height="10" rx="2" fill="#020617"/>
+        <rect x="-50" y="0" width="100" height="10" rx="2" fill="#020617"/>
+        <rect x="-50" y="20" width="100" height="10" rx="2" fill="#020617"/>
+        <circle cx="35" cy="-15" r="3" fill="#10b981"><animate attributeName="opacity" values="1;0.2;1" dur="2s" repeatCount="indefinite" /></circle>
+        <text x="0" y="60" fill="#f8fafc" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle">Tool: pay</text>
+
+        <g opacity="0">
+            <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <text x="0" y="75" fill="#ef4444" font-family="monospace" font-size="11" text-anchor="middle">Unrestricted API</text>
+        </g>
+        <g opacity="0">
+            <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <text x="0" y="75" fill="#10b981" font-family="monospace" font-size="11" text-anchor="middle">&lt;= $100 : Auto</text>
+            <text x="0" y="88" fill="#f59e0b" font-family="monospace" font-size="11" text-anchor="middle">&lt;= $5k : Auth</text>
+            <text x="0" y="101" fill="#ef4444" font-family="monospace" font-size="11" text-anchor="middle">&gt; $5k : Block</text>
+        </g>
+    </g>
+
+    <g transform="translate(830, 328)">
+        <rect x="-60" y="-35" width="120" height="70" rx="8" fill="#1e293b" stroke="#334155" stroke-width="2" />
+        <rect x="-50" y="-20" width="100" height="10" rx="2" fill="#020617"/>
+        <rect x="-50" y="0" width="100" height="10" rx="2" fill="#020617"/>
+        <rect x="-50" y="20" width="100" height="10" rx="2" fill="#020617"/>
+        <circle cx="35" cy="-15" r="3" fill="#f59e0b"><animate attributeName="opacity" values="1;0.2;1" dur="2s" repeatCount="indefinite" /></circle>
+        <text x="0" y="60" fill="#f8fafc" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle">Tool: email</text>
+
+        <g opacity="0">
+            <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <text x="0" y="75" fill="#ef4444" font-family="monospace" font-size="11" text-anchor="middle">Unrestricted API</text>
+        </g>
+        <g opacity="0">
+            <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <text x="0" y="75" fill="#f59e0b" font-family="monospace" font-size="11" text-anchor="middle">Always Req Human</text>
+        </g>
+    </g>
+
+    <g transform="translate(830, 460)">
+        <rect x="-60" y="-35" width="120" height="70" rx="8" stroke-width="2">
+            <animate attributeName="fill" values="#1e293b;#1e293b;#450a0a;#450a0a;#1e293b;#1e293b" keyTimes="0;0.429;0.43;0.499;0.50;1" dur="40s" repeatCount="indefinite" />
+            <animate attributeName="stroke" values="#334155;#334155;#ef4444;#ef4444;#334155;#334155" keyTimes="0;0.429;0.43;0.499;0.50;1" dur="40s" repeatCount="indefinite" />
+        </rect>
+        <rect x="-50" y="-20" width="100" height="10" rx="2" fill="#020617"/>
+        <rect x="-50" y="0" width="100" height="10" rx="2" fill="#020617"/>
+        <rect x="-50" y="20" width="100" height="10" rx="2" fill="#020617"/>
+        <circle cx="35" cy="-15" r="3">
+            <animate attributeName="fill" values="#a855f7;#a855f7;#ef4444;#ef4444;#a855f7;#a855f7" keyTimes="0;0.429;0.43;0.499;0.50;1" dur="40s" repeatCount="indefinite" />
+            <animate attributeName="opacity" values="1;0.2;1" dur="2s" repeatCount="indefinite" />
+        </circle>
+        <text x="0" y="60" fill="#f8fafc" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle">Tool: sql</text>
+
+        <g opacity="0">
+            <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <text x="0" y="75" fill="#ef4444" font-family="monospace" font-size="11" text-anchor="middle">
+                <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.429;0.43;0.499;0.50;1" dur="40s" repeatCount="indefinite" />
+                Unrestricted DB
+            </text>
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.429;0.43;0.499;0.50;1" dur="40s" repeatCount="indefinite" />
+                <path d="M -30 -15 L 30 15 M 30 -15 L -30 15" stroke="#ef4444" stroke-width="6" stroke-linecap="round" filter="url(#glow)"/>
+                <text x="0" y="85" fill="#ef4444" font-family="monospace" font-size="12" font-weight="bold" text-anchor="middle" filter="url(#glow)">[FATAL: DB DROPPED]</text>
+            </g>
+        </g>
+
+        <g opacity="0">
+            <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <text x="0" y="75" fill="#a855f7" font-family="monospace" font-size="11" text-anchor="middle">Req AI (+Human)</text>
+        </g>
+    </g>
+
+    <g opacity="0">
+        <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+
+        <g transform="translate(450, 120)">
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.829;0.830;0.849;0.850;1" dur="40s" repeatCount="indefinite"/>
+                <circle cx="0" cy="0" r="35" fill="none" stroke="#a855f7" stroke-width="3">
+                    <animate attributeName="r" values="35;50;35" dur="1s" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+                </circle>
+            </g>
+            <rect x="-35" y="-25" width="70" height="50" rx="10" fill="#1e293b" stroke="#a855f7" stroke-width="3"/>
+            <circle cx="-15" cy="-5" r="4" fill="#a855f7"/>
+            <circle cx="15" cy="-5" r="4" fill="#a855f7"/>
+            <path d="M -10 10 C -5 15, 5 15, 10 10" fill="none" stroke="#a855f7" stroke-width="2"/>
+            <text x="0" y="45" fill="#cbd5e1" font-family="monospace" font-size="12" font-weight="bold" text-anchor="middle">AI Approver</text>
+        </g>
+
+        <g transform="translate(630, 120)">
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0;1;1;0;0" keyTimes="0;0.699;0.700;0.724;0.725;0.849;0.850;0.889;0.890;1" dur="40s" repeatCount="indefinite"/>
+                <circle cx="0" cy="5" r="30" fill="none" stroke="#f59e0b" stroke-width="3">
+                    <animate attributeName="r" values="30;45;30" dur="1s" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+                </circle>
+            </g>
+            <circle cx="0" cy="5" r="30" fill="#1e293b" stroke="#f59e0b" stroke-width="3"/>
+            <circle cx="0" cy="-5" r="10" fill="#f59e0b"/>
+            <path d="M -18 22 C -18 7, 18 7, 18 22 Z" fill="#f59e0b"/>
+            <text x="0" y="55" fill="#cbd5e1" font-family="monospace" font-size="12" font-weight="bold" text-anchor="middle">Human Approver</text>
+        </g>
+
+        <g transform="translate(450, 320)">
+            <rect x="-50" y="-60" width="100" height="120" rx="12" fill="#0f172a" stroke="#334155" stroke-width="4" filter="url(#glow)">
+                <animate attributeName="stroke"
+                    values="#334155; #334155;
+                            #38bdf8; #38bdf8; #10b981; #10b981; #475569; #475569;
+                            #38bdf8; #38bdf8; #ef4444; #ef4444; #475569; #475569;
+                            #38bdf8; #38bdf8; #f59e0b; #f59e0b; #10b981; #10b981; #475569; #475569;
+                            #38bdf8; #38bdf8; #a855f7; #a855f7; #f59e0b; #f59e0b; #10b981; #10b981; #475569; #475569"
+                    keyTimes="0; 0.504;
+                              0.505; 0.524; 0.525; 0.574; 0.575; 0.604;
+                              0.605; 0.624; 0.625; 0.664; 0.665; 0.679;
+                              0.680; 0.699; 0.700; 0.724; 0.725; 0.774; 0.775; 0.809;
+                              0.810; 0.829; 0.830; 0.849; 0.850; 0.889; 0.890; 0.944; 0.945; 1"
+                    dur="40s" repeatCount="indefinite" />
+            </rect>
+
+            <g transform="scale(0.06) translate(-480, -750)" fill="#FFFFFF" fill-rule="nonzero">
+                <path d="M531.030651,0 C730.405446,0 892.030651,161.625205 892.030651,361 C892.030651,560.374795 730.405446,722 531.030651,722 C465.291938,722 403.657288,704.428413 350.567272,673.725809 L405.250574,619.042004 C443.232077,637.590388 485.915717,648 531.030651,648 C689.536375,648 818.030651,519.505723 818.030651,361 C818.030651,202.494277 689.536375,74 531.030651,74 C372.524928,74 244.030651,202.494277 244.030651,361 C244.030651,406.132219 254.448241,448.831279 273.009969,486.823729 L218.329321,541.5057 C187.611578,488.406119 170.030651,426.756182 170.030651,361 C170.030651,161.625205 331.655857,0 531.030651,0 Z"></path>
+                <path d="M571.730882,266.133399 L623.623354,318.88917 L237.226702,700.61499 L233.513357,704.27738 C210.166625,727.303745 172.658216,727.321636 149.289528,704.317554 L140.228363,695.397764 L140.228363,695.397764 L0,554.370673 L52.3259018,502.044771 L191.850951,641.569768 L571.730882,266.133399 Z"></path>
+            </g>
+
+            <text x="0" y="25" fill="#f8fafc" font-family="monospace" font-size="16" font-weight="bold" text-anchor="middle">Preloop</text>
+            <text x="0" y="42" fill="#94a3b8" font-family="monospace" font-size="12" text-anchor="middle">Firewall</text>
+
+            <text x="0" y="75" font-family="monospace" font-size="12" font-weight="bold" text-anchor="middle">
+                <tspan fill="#64748b" opacity="0">IDLE
+                    <animate attributeName="opacity" values="0;1;1;0;0;1;1;0;0;1;1;0;0;1;1;0;0;1;1;0" keyTimes="0; 0.5; 0.504; 0.505; 0.575; 0.576; 0.604; 0.605; 0.665; 0.666; 0.679; 0.680; 0.775; 0.776; 0.809; 0.810; 0.945; 0.946; 0.999; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+                <tspan x="0" y="75" fill="#38bdf8" opacity="0">EVALUATING
+                    <animate attributeName="opacity" values="0;0;1;1;0;0;1;1;0;0;1;1;0;0;1;1;0;0" keyTimes="0; 0.504; 0.505; 0.524; 0.525; 0.604; 0.605; 0.624; 0.625; 0.679; 0.680; 0.699; 0.700; 0.809; 0.810; 0.829; 0.830; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+                <tspan x="0" y="75" fill="#10b981" opacity="0">AUTO-APPROVED
+                    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0; 0.524; 0.525; 0.574; 0.575; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+                <tspan x="0" y="75" fill="#ef4444" opacity="0">BLOCKED
+                    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0; 0.624; 0.625; 0.664; 0.665; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+                <tspan x="0" y="75" fill="#f59e0b" opacity="0">WAIT: HUMAN
+                    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0; 0.699; 0.700; 0.724; 0.725; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+                <tspan x="0" y="75" fill="#10b981" opacity="0">APPROVED
+                    <animate attributeName="opacity" values="0;0;1;1;0;0;1;1;0;0" keyTimes="0; 0.724; 0.725; 0.774; 0.775; 0.889; 0.890; 0.944; 0.945; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+                <tspan x="0" y="75" fill="#a855f7" opacity="0">WAIT: AI
+                    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0; 0.829; 0.830; 0.849; 0.850; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+                <tspan x="0" y="75" fill="#f59e0b" opacity="0">ESCALATED
+                    <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0; 0.849; 0.850; 0.889; 0.890; 1" dur="40s" repeatCount="indefinite"/>
+                </tspan>
+            </text>
+        </g>
+    </g>
+
+    <g id="packets">
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.009;0.01;0.029;0.03;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 C 400 320, 500 170, 770 170" keyPoints="0;0;1;1" keyTimes="0;0.01;0.03;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.029;0.03;0.049;0.05;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 170 C 500 170, 400 320, 220 320" keyPoints="0;0;1;1" keyTimes="0;0.03;0.05;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.069;0.07;0.089;0.09;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 L 770 328" keyPoints="0;0;1;1" keyTimes="0;0.07;0.09;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.089;0.09;0.109;0.11;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 328 L 220 320" keyPoints="0;0;1;1" keyTimes="0;0.09;0.11;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.129;0.13;0.149;0.15;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 C 400 320, 500 460, 770 460" keyPoints="0;0;1;1" keyTimes="0;0.13;0.15;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.149;0.15;0.169;0.17;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 460 C 500 460, 400 320, 220 320" keyPoints="0;0;1;1" keyTimes="0;0.15;0.17;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-rogue" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.239;0.24;0.259;0.26;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 C 400 320, 500 170, 770 170" keyPoints="0;0;1;1" keyTimes="0;0.24;0.26;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.259;0.26;0.279;0.28;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 170 C 500 170, 400 320, 220 320" keyPoints="0;0;1;1" keyTimes="0;0.26;0.28;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-rogue" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.269;0.27;0.289;0.29;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 C 400 320, 500 170, 770 170" keyPoints="0;0;1;1" keyTimes="0;0.27;0.29;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.289;0.29;0.309;0.31;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 170 C 500 170, 400 320, 220 320" keyPoints="0;0;1;1" keyTimes="0;0.29;0.31;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-rogue" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.329;0.33;0.349;0.35;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 L 770 328" keyPoints="0;0;1;1" keyTimes="0;0.33;0.35;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.349;0.35;0.369;0.37;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 328 L 220 320" keyPoints="0;0;1;1" keyTimes="0;0.35;0.37;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-rogue" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.389;0.39;0.409;0.41;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 C 400 320, 500 460, 770 460" keyPoints="0;0;1;1" keyTimes="0;0.39;0.41;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-err" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.409;0.41;0.429;0.43;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 460 C 500 460, 400 320, 220 320" keyPoints="0;0;1;1" keyTimes="0;0.41;0.43;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.504;0.505;0.519;0.520;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 L 400 320" keyPoints="0;0;1;1" keyTimes="0;0.505;0.520;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.524;0.525;0.539;0.540;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 500 320 C 600 320, 600 170, 770 170" keyPoints="0;0;1;1" keyTimes="0;0.525;0.540;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.539;0.540;0.554;0.555;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 170 C 600 170, 600 320, 500 320" keyPoints="0;0;1;1" keyTimes="0;0.540;0.555;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.559;0.560;0.574;0.575;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 400 320 L 220 320" keyPoints="0;0;1;1" keyTimes="0;0.560;0.575;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.604;0.605;0.619;0.620;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 L 400 320" keyPoints="0;0;1;1" keyTimes="0;0.605;0.620;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-err" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.624;0.625;0.639;0.640;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 400 320 L 220 320" keyPoints="0;0;1;1" keyTimes="0;0.625;0.640;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.679;0.680;0.694;0.695;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 L 400 320" keyPoints="0;0;1;1" keyTimes="0;0.680;0.695;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ask" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.699;0.700;0.714;0.715;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 490 260 L 630 145" keyPoints="0;0;1;1" keyTimes="0;0.700;0.715;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.724;0.725;0.739;0.740;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 630 145 L 490 260" keyPoints="0;0;1;1" keyTimes="0;0.725;0.740;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.744;0.745;0.759;0.760;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 500 320 L 770 328" keyPoints="0;0;1;1" keyTimes="0;0.745;0.760;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.759;0.760;0.774;0.775;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 328 L 500 320" keyPoints="0;0;1;1" keyTimes="0;0.760;0.775;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.779;0.780;0.794;0.795;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 400 320 L 220 320" keyPoints="0;0;1;1" keyTimes="0;0.780;0.795;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.809;0.810;0.824;0.825;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 220 320 L 400 320" keyPoints="0;0;1;1" keyTimes="0;0.810;0.825;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ask" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.829;0.830;0.844;0.845;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 450 260 L 450 160" keyPoints="0;0;1;1" keyTimes="0;0.830;0.845;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-esc" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.849;0.850;0.864;0.865;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 485 120 L 600 120" keyPoints="0;0;1;1" keyTimes="0;0.850;0.865;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.874;0.875;0.889;0.890;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 600 120 L 485 120" keyPoints="0;0;1;1" keyTimes="0;0.875;0.890;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.889;0.890;0.904;0.905;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 450 160 L 450 260" keyPoints="0;0;1;1" keyTimes="0;0.890;0.905;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-req" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.909;0.910;0.924;0.925;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 500 320 C 600 320, 600 460, 770 460" keyPoints="0;0;1;1" keyTimes="0;0.910;0.925;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.924;0.925;0.939;0.940;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 770 460 C 600 460, 600 320, 500 320" keyPoints="0;0;1;1" keyTimes="0;0.925;0.940;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+        <g opacity="0"><use href="#pkt-ok" /><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.944;0.945;0.959;0.960;1" dur="40s" repeatCount="indefinite" /><animateMotion path="M 400 320 L 220 320" keyPoints="0;0;1;1" keyTimes="0;0.945;0.960;1" calcMode="linear" dur="40s" repeatCount="indefinite" /></g>
+    </g>
+
+    <g transform="translate(10, 434)">
+        <g opacity="0">
+            <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <rect width="660" height="110" rx="8" fill="#020617" stroke="#ef4444" stroke-width="2"/>
+            <text x="20" y="25" fill="#ef4444" font-family="monospace" font-size="12">Direct Tool Execution Log (NO POLICY CONTROL)</text>
+
+            <g opacity="0">
+                <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.199;0.2;0.999;1" dur="40s" repeatCount="indefinite" />
+                <text x="20" y="50" fill="#38bdf8" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.01;1" dur="40s" repeatCount="indefinite" />&gt; Agent: pay(amount=50)</text>
+                <text x="20" y="70" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.04;1" dur="40s" repeatCount="indefinite" />[EXECUTED] Processed directly.</text>
+                <text x="320" y="50" fill="#38bdf8" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.07;1" dur="40s" repeatCount="indefinite" />&gt; Agent: email("all")</text>
+                <text x="320" y="70" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.10;1" dur="40s" repeatCount="indefinite" />[EXECUTED] Sent directly.</text>
+                <text x="20" y="90" fill="#38bdf8" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.13;1" dur="40s" repeatCount="indefinite" />&gt; Agent: sql("SELECT *")</text>
+                <text x="20" y="110" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.16;1" dur="40s" repeatCount="indefinite" />[EXECUTED] Query successful.</text>
+            </g>
+
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.199;0.2;0.429;0.43;1" dur="40s" repeatCount="indefinite" />
+                <text x="20" y="45" fill="#ef4444" font-family="monospace" font-size="14" font-weight="bold">[WARN] Agent compromised. Proceeding without guardrails!</text>
+                <text x="20" y="65" fill="#fca5a5" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.24;1" dur="40s" repeatCount="indefinite" />&gt; SPAM: pay(42424242)</text>
+                <text x="20" y="85" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.28;1" dur="40s" repeatCount="indefinite" />[EXECUTED] $84.8M transferred.</text>
+                <text x="320" y="65" fill="#fca5a5" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.33;1" dur="40s" repeatCount="indefinite" />&gt; SPAM: email("Sharks")</text>
+                <text x="320" y="85" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.36;1" dur="40s" repeatCount="indefinite" />[EXECUTED] Sent to all users.</text>
+                <text x="20" y="105" fill="#fca5a5" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.39;1" dur="40s" repeatCount="indefinite" />&gt; FATAL: sql("DROP DB")</text>
+                <text x="320" y="105" fill="#ef4444" font-family="monospace" font-size="14" font-weight="bold" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.41;1" dur="40s" repeatCount="indefinite" />[CRITICAL SYSTEM CRASH]</text>
+            </g>
+
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.429;0.43;0.499;0.5;1" dur="40s" repeatCount="indefinite" />
+                <text x="330" y="55" fill="#ef4444" font-family="monospace" font-size="24" font-weight="bold" text-anchor="middle" filter="url(#glow)">
+                    SYSTEM FAILURE
+                    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite" />
+                </text>
+                <text x="330" y="85" fill="#fca5a5" font-family="monospace" font-size="14" text-anchor="middle">Agent crashed the production database &amp; depleted funds.</text>
+            </g>
+        </g>
+
+        <g opacity="0">
+            <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.499;0.5;0.999;1" dur="40s" repeatCount="indefinite" />
+            <rect width="660" height="110" rx="8" fill="#020617" stroke="#1e293b" stroke-width="2"/>
+            <text x="20" y="25" fill="#64748b" font-family="monospace" font-size="12">Preloop Policy Execution Log</text>
+
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.499;0.5;0.599;0.6;1" dur="40s" repeatCount="indefinite" />
+                <text x="20" y="55" fill="#38bdf8" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.505;1" dur="40s" repeatCount="indefinite"/>&gt; Agent tool call: pay(amount=50)</text>
+                <text x="20" y="75" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.525;1" dur="40s" repeatCount="indefinite"/>[ALLOWED] Policy: amount &lt;= $100 &#x2192; Auto-Approve</text>
+            </g>
+
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.599;0.6;0.679;0.68;1" dur="40s" repeatCount="indefinite" />
+                <text x="20" y="55" fill="#38bdf8" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.605;1" dur="40s" repeatCount="indefinite"/>&gt; Agent tool call: pay(amount=10000)</text>
+                <text x="20" y="75" fill="#ef4444" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.625;1" dur="40s" repeatCount="indefinite"/>[DENIED] Policy violation: amount &gt; $5000 &#x2192; Blocked</text>
+            </g>
+
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.679;0.68;0.809;0.81;1" dur="40s" repeatCount="indefinite" />
+                <text x="20" y="55" fill="#38bdf8" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.680;1" dur="40s" repeatCount="indefinite"/>&gt; Agent tool call: email(to="all")</text>
+                <text x="20" y="75" fill="#f59e0b" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.700;1" dur="40s" repeatCount="indefinite"/>[HOLD] Always requires Human Approval</text>
+                <text x="20" y="95" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.725;1" dur="40s" repeatCount="indefinite"/>[APPROVED] Human authorized the action</text>
+            </g>
+
+            <g opacity="0">
+                <animate attributeName="opacity" values="0;0;1;1" keyTimes="0;0.809;0.81;1" dur="40s" repeatCount="indefinite" />
+                <text x="20" y="50" fill="#38bdf8" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.810;1" dur="40s" repeatCount="indefinite"/>&gt; Agent tool call: sql(cmd="DROP TABLE...")</text>
+                <text x="20" y="70" fill="#a855f7" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.830;1" dur="40s" repeatCount="indefinite"/>[HOLD] Requires AI Approval</text>
+                <text x="20" y="90" fill="#f59e0b" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.850;1" dur="40s" repeatCount="indefinite"/>[ESCALATION] AI agent unsure, delegating to Human</text>
+                <text x="20" y="110" fill="#10b981" font-family="monospace" font-size="14" opacity="0"><animate attributeName="opacity" values="0;1;1" keyTimes="0;0.890;1" dur="40s" repeatCount="indefinite"/>[APPROVED] Human authorized the action</text>
+            </g>
+        </g>
+    </g>
+</svg>

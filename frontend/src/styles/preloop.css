@@ -1,0 +1,500 @@
+/* Preloop Main Stylesheet */
+
+:root {
+    --gradient-brand: linear-gradient(45deg, #d35400, #6c3483, #1f618d);
+    --primary: #2d5fac;
+    --primary-light: #f0f5fc;
+    --secondary: #404b5a;
+    --light: #fcfcfc;
+    --dark: #1f2937;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-700: #374151;
+    --gray-900: #111827;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    line-height: 1.7;
+    color: var(--gray-700);
+    background-color: white;
+    font-weight: 400;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-weight: 600;
+    color: var(--dark);
+    letter-spacing: -0.025em;
+}
+
+/* Navigation */
+.navbar {
+    padding: 1.8rem 0;
+    box-shadow: none;
+    background-color: white !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.navbar-brand {
+    font-weight: 700;
+    color: var(--dark) !important;
+    letter-spacing: -0.5px;
+    margin-right: 2rem;
+}
+
+.navbar-dark .navbar-nav .nav-link {
+    color: var(--secondary) !important;
+    font-weight: 500;
+    font-size: 0.95rem;
+    padding: 0.5rem 1.2rem;
+    transition: color 0.2s ease;
+}
+
+.navbar-dark .navbar-nav .nav-link:hover {
+    color: var(--primary) !important;
+}
+
+/* Ensure navbar toggler icon is visible on white background */
+.navbar-dark .navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%280, 0, 0, 0.55%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+/* Hero Section */
+.hero {
+    background-color: white;
+    color: var(--gray-900);
+    padding: 120px 0 100px;
+    position: relative;
+    overflow: hidden;
+}
+
+.hero::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 90% 50%, var(--primary-light) 0%, transparent 80%);
+    z-index: 0;
+}
+
+.hero .container {
+    position: relative;
+    z-index: 1;
+}
+
+.hero h1 {
+    font-size: 3.6rem;
+    line-height: 1.1;
+    margin-bottom: 1.8rem;
+    text-align: left;
+}
+
+.hero .lead {
+    font-size: 1.4rem;
+    font-weight: 400;
+    color: var(--secondary);
+    max-width: 540px;
+    margin: 0 0 2.8rem;
+    text-align: left;
+}
+
+#main-diagram {
+    margin-top: 20px;
+}
+
+/* Feature Section */
+.feature-section {
+    padding: 80px 0;
+    background-color: white;
+}
+
+.feature-box {
+    background: white;
+    border-radius: 8px;
+    padding: 32px 30px;
+    box-shadow: none;
+    margin-bottom: 20px;
+    border: none;
+    height: 100%;
+}
+
+.feature-icon {
+    margin-bottom: 20px;
+    display: inline-block;
+}
+
+.feature-icon img {
+    width: 64px;
+    height: 64px;
+}
+
+.feature-box h3 {
+    font-size: 1.2rem;
+    margin-bottom: 16px;
+    font-weight: 600;
+}
+
+.feature-box p {
+    color: var(--secondary);
+    margin-bottom: 0;
+    font-size: 0.95rem;
+    line-height: 1.7;
+}
+
+/* Video Section */
+.video-section {
+    padding: 60px 0;
+    background-color: #fff;
+}
+
+/* CTA Section */
+.cta-section {
+    padding: 60px 0;
+    background-color: var(--primary-light);
+    text-align: center;
+}
+
+/* Buttons */
+.btn-primary {
+    background-color: #2271F2;
+    border: none;
+    padding: 16px 36px;
+    font-weight: 500;
+    font-size: 1.0rem;
+    border-radius: 8px;
+    transition: background-color 0.2s ease;
+}
+
+.tab-content .btn-primary {
+    padding: 8px 14px;
+}
+
+/* Center submit button in register and login forms */
+#registerForm .btn-primary,
+#loginForm .btn-primary {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+    width: 60%;
+}
+
+.btn-primary:hover {
+    background-color: #1a5dbb;
+    box-shadow: none;
+}
+
+.btn-light {
+    background-color: white;
+    color: var(--primary);
+    border: none;
+    padding: 12px 30px;
+    font-weight: 500;
+    font-size: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.btn-light:hover {
+    background-color: white;
+    color: var(--primary);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+/* Footer */
+.footer {
+    background-color: var(--gray-900);
+    color: var(--gray-200);
+    padding: 60px 0 30px;
+    margin-top: auto;
+    flex-shrink: 0;
+}
+
+.footer h5 {
+    color: white;
+    font-size: 1.1rem;
+    margin-bottom: 20px;
+    font-weight: 600;
+}
+
+.footer p,
+.footer li {
+    color: var(--gray-200);
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+}
+
+.footer a {
+    color: var(--gray-200);
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+.footer a:hover {
+    color: white;
+}
+
+.footer hr {
+    margin: 30px 0;
+    opacity: 0.1;
+}
+
+.footer .copyright {
+    font-size: 0.85rem;
+    color: var(--gray-200);
+    opacity: 0.8;
+}
+
+/* Styles for the bottom line of the footer */
+.footer-bottom-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.footer-bottom-line .copyright-text {
+    font-size: 0.85rem;
+}
+
+/* General styling for links within the footer-bottom-line */
+.footer-bottom-line .copyright-text a,
+.footer-bottom-line .linkedin-icon-footer {
+    color: inherit;
+    text-decoration: none;
+}
+
+.footer-bottom-line .copyright-text a:hover,
+.footer-bottom-line .linkedin-icon-footer:hover {
+    text-decoration: underline;
+}
+
+.footer-bottom-line .linkedin-icon-footer svg {
+    fill: currentColor;
+    vertical-align: middle;
+}
+
+/* FAQ Section Styles */
+.faq-section {
+    background-color: var(--bs-gray-100);
+    /* Or a light background color of your choice */
+}
+
+
+.faq-section .accordion-button {
+    font-weight: 500;
+    color: var(--bs-gray-800);
+}
+
+.faq-section .accordion-button:not(.collapsed) {
+    color: var(--primary);
+}
+
+.faq-section .accordion-body {
+    font-size: 0.95rem;
+    color: var(--bs-gray-700);
+}
+
+/* IDE Selection Tab */
+
+.text-start .row {
+    border: 1px solid var(--gray-200);
+    background-color: white;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+}
+
+#ide-list .list-group-item {
+    padding: 0;
+    margin: 0;
+}
+
+#ide-list .list-group-item.active {
+    background-color: #f5f5f5 !important;
+    color: #333 !important;
+    border-color: transparent !important;
+}
+
+/* Form Styling */
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-label {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: var(--dark);
+}
+
+.form-control {
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+    font-size: 0.95rem;
+}
+
+.form-control:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(45, 95, 172, 0.1);
+}
+
+.form-text,
+.password-requirements {
+    font-size: 0.85rem;
+    color: var(--secondary);
+    margin-top: 0.4rem;
+}
+
+/* Main Content Sections */
+main,
+section:not(.footer) {
+    flex: 1 0 auto;
+}
+
+/* Register/Login Pages */
+
+.register-background {
+    background-color: var(--primary-light);
+}
+
+.register-section {
+    padding: 60px 0;
+    background-color: var(--primary-light);
+    text-align: center;
+}
+
+.register-container {
+    max-width: 550px;
+    margin: 0 auto;
+    padding: 40px;
+    background-color: white;
+    border-radius: 8px;
+    border: 1px solid var(--gray-200);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+}
+
+.register-header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+}
+
+.register-header h1 {
+    font-size: 2.2rem;
+    color: var(--dark);
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+.register-footer {
+    text-align: center;
+    margin-top: 2rem;
+    color: var(--secondary);
+}
+
+.register-footer a {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.register-footer a:hover {
+    text-decoration: underline;
+}
+
+/* Typewriter Effect */
+.typewriter {
+    display: inline-block;
+    margin-left: 6px;
+    margin-right: 6px;
+    min-width: 180px;
+    background: linear-gradient(90deg, #007bff, #6f42c1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 600;
+}
+
+/* Code Container */
+.code-container {
+    position: relative;
+    overflow: hidden;
+}
+
+.copy-btn {
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.copy-btn:hover {
+    opacity: 1;
+}
+
+/* Force navbar items into a row in collapsed view */
+@media (max-width: 991.98px) {
+    .navbar-collapse.show .navbar-nav {
+        flex-direction: row !important;
+        /* Override default column layout */
+        flex-wrap: wrap;
+        /* Allow items to wrap if needed */
+        align-items: center;
+        /* Align items vertically */
+        padding-top: 0.5rem;
+        /* Add some space above */
+    }
+
+    /* Adjust spacing for items in collapsed row */
+    .navbar-collapse.show .navbar-nav .nav-item {
+        margin-right: 0.5rem;
+        /* Space between items */
+        margin-bottom: 0.5rem;
+        /* Space below items if they wrap */
+    }
+
+    /* Remove right margin from the very last visible item in the row */
+    .navbar-collapse.show .navbar-nav>*:last-child>.nav-item:last-child {
+        margin-right: 0;
+    }
+
+    /* Ensure bordered links don't have extra left margin from large screen styles */
+    .navbar-collapse.show .navbar-nav .nav-item a[href="/register"],
+    .navbar-collapse.show .navbar-nav .nav-item a[href="/dashboard"] {
+        margin-left: 0 !important;
+    }
+
+    /* Center hero text and button on mobile */
+    .hero .col-lg-6 {
+        text-align: center;
+    }
+
+    /* Make hero button larger on mobile */
+    .hero .btn {
+        padding: 0.8rem 1.8rem;
+        /* Increase padding */
+        font-size: 1.1rem;
+        /* Slightly larger font */
+        margin-top: 1rem;
+        /* Add some space above the button */
+    }
+
+    /* Reduce padding and center feature boxes on mobile */
+    .feature-section {
+        padding: 40px 0;
+        /* Reduced vertical padding */
+    }
+
+    .feature-box {
+        text-align: center;
+        /* Center icon, heading, and text */
+    }
+}

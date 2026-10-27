@@ -1,0 +1,161 @@
+import click
+import logging
+import atexit
+import signal  # Import signal
+import pytz
+from datetime import datetime  # Import datetime
+import asyncio
+from preloop.models.db.session import get_db_session
+from ..services.manager import sync_scheduled_jobs
+from ..services.event_bus import event_bus_service
+
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.executors.asyncio import AsyncIOExecutor
+from apscheduler.triggers.interval import IntervalTrigger
+from ..config import logger
+
+
+# --- Scheduler Setup ---
+# Global scheduler instance
+scheduler = None
+
+
+def shutdown_scheduler():
+    """Function to shut down the scheduler."""
+    global scheduler
+    if scheduler and scheduler.running:
+        logger.info("Shutting down scheduler...")
+        try:
+            scheduler.shutdown(wait=False)  # Use wait=False for atexit
+            logger.info("Scheduler shut down successfully.")
+        except Exception as e:
+            logger.error(f"Error shutting down scheduler: {e}")
+
+
+# Register the shutdown hook globally for the CLI process
+atexit.register(shutdown_scheduler)
+
+
+async def run_scheduler_async(
+    scheduler: AsyncIOScheduler, reload_interval: int, db, max_workers: int
+):
+    """Runs the scheduler in an asyncio event loop."""
+
+    # Connect to NATS using the shared task publisher service
+    # This ensures the stream is created with the correct, robust configuration.
+    try:
+        await event_bus_service.connect()
+    except Exception as e:
+        logger.error(f"Scheduler failed to connect to NATS: {e}", exc_info=True)
+        # Depending on strictness, you might want to exit here.
+        # For now, we'll allow the scheduler to run but it won't be able to queue tasks.
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
+    def shutdown_handler(sig):
+        logger.info(f"Received signal {sig}, stopping scheduler...")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, shutdown_handler, sig)
+
+    scheduler.start()
+    logger.info(f"APScheduler started with max_workers={max_workers}")
+
+    scheduler.add_job(
+        sync_scheduled_jobs,
+        trigger=IntervalTrigger(seconds=reload_interval),
+        args=[scheduler, db],
+        id="tracker_reload_job",
+        name="Sync Tracker Jobs",
+        replace_existing=True,
+        misfire_grace_time=60,
+        next_run_time=datetime.now(pytz.utc),
+    )
+    logger.info(
+        f"Scheduled tracker job synchronization every {reload_interval} seconds."
+    )
+
+    await stop_event.wait()
+    logger.info("Scheduler event loop stopped.")
+
+
+@click.option(
+    "--reload-interval",
+    type=int,
+    default=60,
+    help="Interval (in seconds) to reload tracker list and sync jobs.",
+    show_default=True,
+)
+@click.option(
+    "--max-workers",
+    type=int,
+    default=10,
+    help="Maximum number of concurrent tracker update jobs.",
+    show_default=True,
+)
+@click.option(
+    "--log-level",
+    type=click.Choice(
+        ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False
+    ),
+    default="INFO",
+    help="Set the logging level.",
+    show_default=True,
+)
+@click.command(name="scheduler")
+def scheduler_cmd(reload_interval: int, max_workers: int, log_level: str):
+    """
+    Start the Preloop Sync scheduler service in the foreground.
+
+    This service periodically checks for active trackers and schedules
+    background jobs to scan them for updates based on their configured intervals.
+    Press Ctrl+C to stop the service.
+    """
+    global scheduler
+    # Set up logging level based on command option
+    logging.getLogger("preloop-sync").setLevel(getattr(logging, log_level.upper()))
+    # Configure root logger for APScheduler logs etc.
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    click.echo(
+        f"Starting Preloop Sync scheduler service in foreground (reload interval: {reload_interval}s, max workers: {max_workers})..."
+    )
+    click.echo("Press Ctrl+C to stop.")
+
+    # Get database session (ensure it stays open for the service duration)
+    # Note: The session created here is primarily for the manager initialization.
+    # The sync_scheduled_jobs function now creates its own session per run.
+    db = next(get_db_session())
+
+    # Configure scheduler executor
+    executors = {"default": AsyncIOExecutor()}
+    job_defaults = {"coalesce": False, "max_instances": 1}
+
+    # Initialize the scheduler
+    scheduler = AsyncIOScheduler(
+        executors=executors, job_defaults=job_defaults, timezone="UTC"
+    )
+
+    try:
+        # Run the scheduler in an asyncio event loop
+        asyncio.run(run_scheduler_async(scheduler, reload_interval, db, max_workers))
+        logger.info("Main loop exited.")
+
+    finally:
+        # Explicitly attempt scheduler shutdown here
+        shutdown_scheduler()
+
+        # Close DB session
+        # Use db.is_active check instead of is_closed
+        if db and db.is_active:
+            try:
+                db.close()
+                logger.info("Initial database session closed.")
+            except Exception as e:
+                logger.error(f"Error closing initial database session: {e}")
+        click.echo("Preloop Sync scheduler service stopped.")

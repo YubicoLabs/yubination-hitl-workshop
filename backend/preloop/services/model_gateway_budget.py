@@ -1,0 +1,401 @@
+"""Budget checks for model gateway requests."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import math
+from typing import Any, Dict, Optional
+
+from fastapi import HTTPException
+from sqlalchemy import inspect
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from preloop.config import settings
+from preloop.models.crud import (
+    crud_account,
+    crud_ai_model,
+    crud_api_usage,
+    crud_flow,
+    crud_model_price_override,
+)
+from preloop.models.crud.plan import subscription as crud_subscription
+from preloop.models.models.ai_model import AIModel
+from preloop.models.models.flow import Flow
+from preloop.services.model_gateway_auth import ModelGatewayAuthContext
+from preloop.services.model_pricing import estimate_ai_model_usage_cost
+from preloop.services.subject_governance import (
+    build_subject_context_from_api_key,
+    get_subject_governance,
+    subject_scope_chain,
+)
+
+
+DEFAULT_ESTIMATED_OUTPUT_TOKENS = 1024
+
+
+@dataclass
+class BudgetCheckResult:
+    """Outcome of a gateway budget check."""
+
+    account_limit_usd: Optional[float]
+    account_soft_limit_usd: Optional[float]
+    account_current_spend_usd: float
+    account_estimated_total_usd: Optional[float]
+    flow_limit_usd: Optional[float]
+    flow_soft_limit_usd: Optional[float]
+    flow_current_spend_usd: float
+    flow_estimated_total_usd: Optional[float]
+    estimated_request_cost_usd: Optional[float]
+    trial_hosted_model_limit_usd: Optional[float]
+    trial_hosted_model_current_spend_usd: Optional[float]
+    trial_hosted_model_estimated_total_usd: Optional[float]
+    hard_limit_exceeded: bool
+    soft_limit_exceeded: bool
+    enforcement_reason: Optional[str]
+    pricing_available: bool
+    reset_at: Optional[datetime] = None
+
+
+class ModelGatewayBudgetService:
+    """Budget checks and reconciliation for model gateway requests."""
+
+    def __init__(self, db: Session, auth_context: ModelGatewayAuthContext) -> None:
+        self.db = db
+        self.auth_context = auth_context
+
+    def preflight_check(
+        self, ai_model: AIModel, payload: Dict[str, Any]
+    ) -> BudgetCheckResult:
+        """Check whether a gateway request can proceed within configured budgets."""
+        account = crud_account.get(self.db, id=self.auth_context.user.account_id)
+        subject_context = (
+            build_subject_context_from_api_key(self.auth_context.api_key)
+            if self.auth_context.api_key
+            else {}
+        )
+
+        estimated_request_cost = self._estimate_request_cost(
+            ai_model,
+            payload,
+            pricing_override=self._pricing_override_for_request(ai_model, payload),
+        )
+        pricing_available = estimated_request_cost is not None
+
+        hard_limit_exceeded = False
+        soft_limit_exceeded = False
+        enforcement_reason = None
+        reset_at = None
+        trial_hosted_model_limit_usd = None
+        trial_hosted_model_current_spend_usd = None
+        trial_hosted_model_estimated_total_usd = None
+        requested_model = str(
+            payload.get("model") or ai_model.model_identifier or ""
+        ).strip()
+
+        # 1. Check legacy allowed models for subject
+        scoped_allowed_models: list[set[str]] = []
+        if account is not None:
+            for subject_type, subject_id in subject_scope_chain(subject_context):
+                config = get_subject_governance(
+                    account.meta_data or {},
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                )
+                allowed_models = config.get("allowed_models")
+                if isinstance(allowed_models, list) and allowed_models:
+                    scoped_allowed_models.append(
+                        {
+                            str(item).strip()
+                            for item in allowed_models
+                            if str(item).strip()
+                        }
+                    )
+
+        if scoped_allowed_models:
+            allowed_model_set = set.intersection(*scoped_allowed_models)
+            if requested_model and requested_model not in allowed_model_set:
+                hard_limit_exceeded = True
+                enforcement_reason = "subject_model_not_allowed"
+
+        # 2. Check trial mode limitation
+        subscription = crud_subscription.get_active_for_account(
+            self.db, account_id=str(self.auth_context.user.account_id)
+        )
+        if (
+            subscription
+            and subscription.status == "trialing"
+            and self._is_built_in_hosted_model(ai_model)
+        ):
+            trial_hosted_model_limit_usd = max(
+                float(settings.billing_trial_hosted_model_hard_cap_usd), 0.0
+            )
+            trial_hosted_model_current_spend_usd = self._get_trial_hosted_model_spend(
+                account_id=str(self.auth_context.user.account_id),
+                start=subscription.current_period_start,
+                end=subscription.current_period_end or datetime.now(timezone.utc),
+            )
+            trial_hosted_model_estimated_total_usd = (
+                trial_hosted_model_current_spend_usd + estimated_request_cost
+                if estimated_request_cost is not None
+                else None
+            )
+            if not pricing_available:
+                hard_limit_exceeded = True
+                enforcement_reason = "pricing_required_for_budget_enforcement"
+            elif (
+                trial_hosted_model_estimated_total_usd is not None
+                and trial_hosted_model_estimated_total_usd
+                > trial_hosted_model_limit_usd
+            ):
+                hard_limit_exceeded = True
+                enforcement_reason = "trial_hosted_model_budget_exceeded"
+
+        return BudgetCheckResult(
+            account_limit_usd=None,
+            account_soft_limit_usd=None,
+            account_current_spend_usd=0.0,
+            account_estimated_total_usd=None,
+            flow_limit_usd=None,
+            flow_soft_limit_usd=None,
+            flow_current_spend_usd=0.0,
+            flow_estimated_total_usd=None,
+            estimated_request_cost_usd=estimated_request_cost,
+            trial_hosted_model_limit_usd=trial_hosted_model_limit_usd,
+            trial_hosted_model_current_spend_usd=trial_hosted_model_current_spend_usd,
+            trial_hosted_model_estimated_total_usd=trial_hosted_model_estimated_total_usd,
+            hard_limit_exceeded=hard_limit_exceeded,
+            soft_limit_exceeded=soft_limit_exceeded,
+            enforcement_reason=enforcement_reason,
+            pricing_available=pricing_available,
+            reset_at=reset_at,
+        )
+
+    def enforce_or_raise(
+        self, ai_model: AIModel, payload: Dict[str, Any]
+    ) -> BudgetCheckResult:
+        """Run the preflight check and raise if a hard limit is exceeded."""
+        result = self.preflight_check(ai_model, payload)
+        if result.hard_limit_exceeded:
+            detail = "Model gateway budget exceeded"
+            if result.enforcement_reason == "account_budget_exceeded":
+                detail = "Model gateway budget exceeded: account monthly limit reached"
+            elif result.enforcement_reason == "flow_budget_exceeded":
+                detail = "Model gateway budget exceeded: flow monthly limit reached"
+            elif result.enforcement_reason == "user_model_budget_exceeded":
+                detail = "Model gateway budget exceeded: user model limit reached"
+            elif result.enforcement_reason == "api_key_model_budget_exceeded":
+                detail = "Model gateway budget exceeded: key model limit reached"
+            elif result.enforcement_reason == "account_model_budget_exceeded":
+                detail = "Model gateway budget exceeded: account model limit reached"
+            elif result.enforcement_reason == "pricing_required_for_budget_enforcement":
+                detail = "Model gateway budget exceeded: pricing unavailable for requested model"
+            elif result.enforcement_reason == "trial_hosted_model_budget_exceeded":
+                detail = "Preloop trial limit for hosted model reached. Please configure your own OpenAI/Anthropic API key."
+
+            if result.reset_at:
+                detail += f", try again at {result.reset_at.isoformat()}"
+
+            headers = {}
+            if result.reset_at:
+                retry_after = max(
+                    int((result.reset_at - datetime.now(timezone.utc)).total_seconds()),
+                    1,
+                )
+                headers["Retry-After"] = str(retry_after)
+
+            raise HTTPException(status_code=403, detail=detail, headers=headers)
+        return result
+
+    def _get_gateway_spend(
+        self,
+        *,
+        account_id: str,
+        start: datetime,
+        flow_id: Optional[str] = None,
+        api_key_id: Optional[str] = None,
+        runtime_principal_id: Optional[str] = None,
+        model_alias: Optional[str] = None,
+    ) -> float:
+        return crud_api_usage.get_gateway_spend(
+            self.db,
+            account_id=account_id,
+            start=start,
+            flow_id=flow_id,
+            api_key_id=api_key_id,
+            runtime_principal_id=runtime_principal_id,
+            model_alias=model_alias,
+        )
+
+    def _get_trial_hosted_model_spend(
+        self, *, account_id: str, start: datetime, end: datetime
+    ) -> float:
+        hosted_model_ids = {
+            str(model.id)
+            for model in crud_ai_model.get_all_for_account(
+                self.db, account_id=account_id
+            )
+            if self._is_built_in_hosted_model(model)
+        }
+        if not hosted_model_ids:
+            return 0.0
+
+        usage_rows = crud_api_usage.get_gateway_usage_by_model(
+            self.db,
+            account_id=account_id,
+            start_date=start,
+            end_date=end,
+            limit=max(len(hosted_model_ids), 20),
+        )
+        return float(
+            sum(
+                float(row.get("estimated_cost") or 0.0)
+                for row in usage_rows
+                if row.get("ai_model_id") in hosted_model_ids
+            )
+        )
+
+    @staticmethod
+    def _is_built_in_hosted_model(ai_model: AIModel) -> bool:
+        meta_data = ai_model.meta_data if isinstance(ai_model.meta_data, dict) else {}
+        if bool(meta_data.get("hosted")):
+            return True
+        gateway_config = (
+            meta_data.get("gateway")
+            if isinstance(meta_data.get("gateway"), dict)
+            else {}
+        )
+        return ai_model.account_id is None and bool(gateway_config.get("enabled"))
+
+    @staticmethod
+    def _normalize_budget_config(
+        config: Optional[Dict[str, Any]],
+    ) -> Dict[str, Optional[float]]:
+        config = config or {}
+        monthly_limit = config.get("monthly_usd_limit")
+        soft_limit = config.get("soft_limit_usd")
+        if (
+            soft_limit is None
+            and monthly_limit is not None
+            and config.get("soft_limit_ratio") is not None
+        ):
+            soft_limit = float(monthly_limit) * float(config["soft_limit_ratio"])
+        return {
+            "monthly_usd_limit": float(monthly_limit)
+            if monthly_limit is not None
+            else None,
+            "soft_limit_usd": float(soft_limit) if soft_limit is not None else None,
+        }
+
+    @staticmethod
+    def _current_period_start() -> datetime:
+        now = datetime.now(timezone.utc)
+        return datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+
+    def _get_flow(self, flow_id: Optional[str]) -> Optional[Flow]:
+        if not flow_id:
+            return None
+        return crud_flow.get(
+            self.db,
+            id=flow_id,
+            account_id=self.auth_context.user.account_id,
+        )
+
+    def _estimate_request_cost(
+        self,
+        ai_model: AIModel,
+        payload: Dict[str, Any],
+        pricing_override: Optional[Dict[str, Any]] = None,
+    ) -> Optional[float]:
+        estimated_input_tokens = ModelGatewayBudgetService._estimate_input_tokens(
+            payload
+        )
+        estimated_output_tokens = int(
+            payload.get("max_completion_tokens")
+            or payload.get("max_output_tokens")
+            or payload.get("max_tokens")
+            or DEFAULT_ESTIMATED_OUTPUT_TOKENS
+        )
+        return estimate_ai_model_usage_cost(
+            ai_model,
+            prompt_tokens=estimated_input_tokens,
+            completion_tokens=estimated_output_tokens,
+            total_tokens=estimated_input_tokens + estimated_output_tokens,
+            pricing_override=pricing_override,
+        )
+
+    def _pricing_override_for_request(
+        self, ai_model: AIModel, payload: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Return account pricing override for preflight cost estimates."""
+        meta_data = ai_model.meta_data if isinstance(ai_model.meta_data, dict) else {}
+        gateway_config = (
+            meta_data.get("gateway")
+            if isinstance(meta_data.get("gateway"), dict)
+            else {}
+        )
+        model_alias = (
+            payload.get("model")
+            or gateway_config.get("model_alias")
+            or ai_model.model_identifier
+        )
+        try:
+            bind = self.db.get_bind()
+            if bind is not None and not inspect(bind).has_table(
+                "model_price_overrides"
+            ):
+                return None
+            override = crud_model_price_override.get_active_for_model(
+                self.db,
+                account_id=self.auth_context.user.account_id,
+                ai_model_id=ai_model.id,
+                model_alias=str(model_alias).strip() if model_alias else None,
+                provider_name=ai_model.provider_name,
+            )
+        except SQLAlchemyError:
+            return None
+        return override.to_pricing_dict() if override is not None else None
+
+    @staticmethod
+    def _estimate_input_tokens(payload: Dict[str, Any]) -> int:
+        text_parts = []
+        if isinstance(payload.get("messages"), list):
+            for message in payload["messages"]:
+                if isinstance(message, dict):
+                    text_parts.append(
+                        ModelGatewayBudgetService._content_to_text(
+                            message.get("content", "")
+                        )
+                    )
+        if payload.get("instructions"):
+            text_parts.append(str(payload["instructions"]))
+        raw_input = payload.get("input")
+        if isinstance(raw_input, str):
+            text_parts.append(raw_input)
+        elif isinstance(raw_input, list):
+            for item in raw_input:
+                if isinstance(item, dict):
+                    text_parts.append(
+                        ModelGatewayBudgetService._content_to_text(
+                            item.get("content", "")
+                        )
+                    )
+        total_chars = sum(len(part) for part in text_parts if part)
+        return max(1, math.ceil(total_chars / 4)) if total_chars else 0
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") in {
+                    "input_text",
+                    "text",
+                    "output_text",
+                }:
+                    texts.append(item.get("text", ""))
+            return "\n".join(filter(None, texts))
+        return str(content)

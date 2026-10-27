@@ -1,0 +1,108 @@
+# Preloop CLI Makefile
+
+# Build variables
+BINARY_NAME := preloop
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+LDFLAGS := -ldflags "-X github.com/preloop/preloop/cli/internal/version.Version=$(VERSION) \
+	-X github.com/preloop/preloop/cli/internal/version.Commit=$(COMMIT) \
+	-X github.com/preloop/preloop/cli/internal/version.BuildDate=$(BUILD_DATE)"
+
+# Go commands
+GOCMD := go
+GOBUILD := $(GOCMD) build
+GOINSTALL := $(GOCMD) install
+GOTEST := $(GOCMD) test
+GOMOD := $(GOCMD) mod
+GOFMT := gofmt
+
+# Directories
+BUILD_DIR := build
+CMD_DIR := ./cmd/preloop
+
+# Platforms for cross-compilation
+PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+
+.PHONY: all build build-all install clean test fmt lint tidy help
+
+# Default target
+all: build
+
+# Build for current platform
+build:
+	@echo "Building $(BINARY_NAME) $(VERSION)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
+	@echo "Built: $(BUILD_DIR)/$(BINARY_NAME)"
+
+# Cross-compile for all platforms
+build-all:
+	@echo "Building $(BINARY_NAME) $(VERSION) for all platforms..."
+	@mkdir -p $(BUILD_DIR)
+	@for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; \
+		arch=$${platform#*/}; \
+		output=$(BUILD_DIR)/$(BINARY_NAME)-$$os-$$arch; \
+		if [ "$$os" = "windows" ]; then output=$$output.exe; fi; \
+		echo "Building $$os/$$arch..."; \
+		GOOS=$$os GOARCH=$$arch $(GOBUILD) $(LDFLAGS) -o $$output $(CMD_DIR) || exit 1; \
+	done
+	@echo "All builds complete!"
+	@ls -la $(BUILD_DIR)/
+
+# Install to GOPATH/bin
+install:
+	@echo "Installing $(BINARY_NAME)..."
+	$(GOINSTALL) $(LDFLAGS) $(CMD_DIR)
+	@echo "Installed to $(shell go env GOPATH)/bin/$(BINARY_NAME)"
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning..."
+	@rm -rf $(BUILD_DIR)
+	@echo "Clean complete"
+
+# Run tests
+test:
+	@echo "Running tests..."
+	$(GOTEST) -v ./...
+
+# Format code
+fmt:
+	@echo "Formatting code..."
+	$(GOFMT) -s -w .
+
+# Run linter (requires golangci-lint)
+lint:
+	@echo "Running linter..."
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
+	fi
+
+# Tidy dependencies
+tidy:
+	@echo "Tidying dependencies..."
+	$(GOMOD) tidy
+
+# Show help
+help:
+	@echo "Preloop CLI Makefile"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make build      Build for current platform"
+	@echo "  make build-all  Cross-compile for all platforms"
+	@echo "  make install    Install to GOPATH/bin"
+	@echo "  make clean      Remove build artifacts"
+	@echo "  make test       Run tests"
+	@echo "  make fmt        Format code"
+	@echo "  make lint       Run linter"
+	@echo "  make tidy       Tidy dependencies"
+	@echo "  make help       Show this help"
+	@echo ""
+	@echo "Variables:"
+	@echo "  VERSION=$(VERSION)"
+	@echo "  COMMIT=$(COMMIT)"
+	@echo "  BUILD_DATE=$(BUILD_DATE)"

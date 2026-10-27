@@ -1,0 +1,3081 @@
+import { LitElement } from 'lit';
+import { Router } from '@vaadin/router';
+import { DEFAULT_SIMILARITY_THRESHOLD } from './config';
+import type {
+  FetchIssuesListParams,
+  SearchIssuesParams,
+  SearchIssuesResponse,
+  ApiKey,
+  Project,
+  Organization,
+  Issue,
+  DuplicatePair,
+  DuplicatesResponse,
+  IssueComplianceResult,
+  CompliancePromptMetadata,
+  ComplianceSuggestion,
+  DependencyPair,
+  DependencyResponse,
+  FlowGatewayEventsResponse,
+  FlowGatewayEvent,
+  AccountManagedAgentListResponse,
+  AgentControlCommandRequest,
+  AgentControlCommandResponse,
+  AgentControlVoiceTranscriptRequest,
+  ManagedAgentDetailResponse,
+  ManagedAgentSummary,
+  ManagedAgentUpdateRequest,
+  SubjectGovernanceConfig,
+  SubjectGovernanceResponse,
+  AccountGatewayUsageSearchResponse,
+  AccountRuntimeSessionDetailResponse,
+  AccountRuntimeSessionListResponse,
+  RuntimeSessionSummary,
+  RuntimeSessionUpdateRequest,
+  RuntimeSessionActivityListResponse,
+  RuntimeSessionSummaryInsight,
+  RuntimeSessionInteractionSummary,
+  RuntimeSessionOptimizationResponse,
+  AccountGatewayUsageSummaryResponse,
+  FlowGatewayUsageSummaryResponse,
+  AIModelGatewayUsageSummaryResponse,
+  ApiKeyGatewayUsageSummaryResponse,
+  AIModelRuntimeSessionListResponse,
+  AIModelGatewayUsageSearchResponse,
+  AIModel,
+  DashboardTelemetryResponse,
+  CostAnalyticsSummaryResponse,
+  ModelPriceOverride,
+  ModelPriceOverrideCreate,
+  ModelPriceOverrideUpdate,
+  SpeechToTextResponse,
+  TextToSpeechRequest,
+} from './types';
+
+// Global refresh promise to prevent concurrent refresh requests
+let refreshPromise: Promise<string | null> | null = null;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    // Notify the app when the accessToken is changed by another tab
+    if (event.key === 'accessToken') {
+      window.dispatchEvent(
+        new CustomEvent('auth-change', { bubbles: true, composed: true })
+      );
+    }
+  });
+}
+
+export function extractErrorMessage(
+  errorData: any,
+  defaultMessage: string
+): string {
+  if (errorData && errorData.detail) {
+    if (Array.isArray(errorData.detail)) {
+      return errorData.detail
+        .map((item: any) => item.msg || JSON.stringify(item))
+        .join(', ');
+    } else if (typeof errorData.detail === 'object') {
+      return JSON.stringify(errorData.detail);
+    }
+    return String(errorData.detail);
+  }
+  return defaultMessage;
+}
+
+async function refreshToken(): Promise<string | null> {
+  // If a refresh is already in progress, wait for it
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  // Start a new refresh
+  refreshPromise = (async () => {
+    try {
+      const refreshTokenValue = localStorage.getItem('refreshToken');
+      if (!refreshTokenValue) {
+        console.error('No refresh token available');
+        return null;
+      }
+
+      const response = await fetch(`/api/v1/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refresh_token: refreshTokenValue }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to refresh token');
+      }
+
+      const data = await response.json();
+      localStorage.setItem('accessToken', data.access_token);
+      localStorage.setItem('refreshToken', data.refresh_token);
+
+      if (typeof window !== 'undefined') {
+        // Dispatch to current window
+        window.dispatchEvent(
+          new CustomEvent('auth-change', { bubbles: true, composed: true })
+        );
+      }
+
+      return data.access_token;
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      // Clear tokens and redirect to login
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('auth-change', { bubbles: true, composed: true })
+        );
+        if (
+          !window.location.pathname.startsWith('/login') &&
+          !window.location.pathname.startsWith('/register')
+        ) {
+          localStorage.setItem(
+            'loginRedirect',
+            window.location.pathname +
+              window.location.search +
+              window.location.hash
+          );
+        }
+      }
+
+      Router.go('/login');
+      return null;
+    } finally {
+      // Clear the refresh promise so future requests can refresh again
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+export async function fetchWithAuth(
+  url: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  let accessToken = localStorage.getItem('accessToken');
+
+  if (!accessToken) {
+    // This case should ideally not be hit if the app is correctly protecting routes
+    console.error('No access token found');
+    if (
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/login') &&
+      !window.location.pathname.startsWith('/register')
+    ) {
+      localStorage.setItem(
+        'loginRedirect',
+        window.location.pathname + window.location.search + window.location.hash
+      );
+    }
+    Router.go('/login');
+    throw new Error('Not authenticated');
+  }
+
+  const headers = new Headers(options.headers || {});
+  headers.set('Authorization', `Bearer ${accessToken}`);
+  options.headers = headers;
+
+  let response = await fetch(url, options);
+
+  if (response.status === 401) {
+    // Check if the 401 is actually a gateway upstream error (e.g., invalid Anthropic or OpenAI API key).
+    // Gateway errors return a JSON envelope with an 'error' object rather than FastAPI's 'detail'.
+    let isUpstreamGatewayError = false;
+    try {
+      const errorData = await response.clone().json();
+      if (errorData && typeof errorData === 'object' && 'error' in errorData) {
+        isUpstreamGatewayError = true;
+      }
+    } catch (e) {
+      // Ignore parse errors, assume it's a normal access token expiration
+    }
+
+    if (isUpstreamGatewayError) {
+      console.log(
+        'Gateway upstream returned 401, returning error directly without refreshing token'
+      );
+      return response;
+    }
+
+    console.log('Access token expired, attempting to refresh...');
+
+    // If another tab or process already refreshed the token, use the new one directly
+    const currentToken = localStorage.getItem('accessToken');
+    if (currentToken && currentToken !== accessToken) {
+      console.log('Token was already refreshed, retrying request');
+      headers.set('Authorization', `Bearer ${currentToken}`);
+      options.headers = headers;
+      return fetch(url, options);
+    }
+
+    const newAccessToken = await refreshToken();
+    if (newAccessToken) {
+      headers.set('Authorization', `Bearer ${newAccessToken}`);
+      options.headers = headers;
+      // Retry the request with the new token
+      response = await fetch(url, options);
+    } else {
+      // If refresh fails, the refreshToken function will handle redirection
+      Router.go('/login');
+      throw new Error('Failed to refresh token, redirecting to login.');
+    }
+  }
+
+  if (response.status === 429) {
+    window.dispatchEvent(
+      new CustomEvent('show-upgrade-modal', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  return response;
+}
+export async function fetchPublic(
+  url: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  const response = await fetch(url, options);
+  // You might want to add basic error handling here if needed
+  return response;
+}
+
+export class AuthedElement extends LitElement {
+  protected async fetchData(url: string, options: RequestInit = {}) {
+    try {
+      const response = await fetchWithAuth(url, options);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to fetch data:', error);
+      // The fetchWithAuth function handles redirection on auth failure
+      return null;
+    }
+  }
+}
+
+export async function getApiUsageStats() {
+  const response = await fetchWithAuth('/api/v1/auth/api-usage');
+  if (!response.ok) {
+    throw new Error('Failed to fetch API usage stats');
+  }
+  return response.json();
+}
+
+export interface GatewayUsageSummaryParams {
+  startDate?: string;
+  endDate?: string;
+  runtimePrincipalId?: string;
+  includeBreakdown?: boolean;
+}
+
+export interface GatewayUsageSearchParams extends GatewayUsageSummaryParams {
+  query?: string;
+  providerName?: string;
+  modelAlias?: string;
+  flowId?: string;
+  runtimeSessionId?: string;
+  sessionSourceType?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface RuntimeSessionListParams extends GatewayUsageSummaryParams {
+  query?: string;
+  sessionSourceType?: string;
+  status?: 'all' | 'active' | 'ended';
+  limit?: number;
+  offset?: number;
+}
+
+export interface RuntimeSessionDetailParams {}
+
+export interface RuntimeSessionInteractionsParams {
+  interactionQuery?: string;
+  interactionLimit?: number;
+  interactionOffset?: number;
+}
+
+export interface ManagedAgentListParams {
+  query?: string;
+  tags?: string;
+  ownerUsername?: string;
+  agentKind?: string;
+  lastSeenAfter?: string;
+  status?: 'all' | 'active' | 'ended';
+  limit?: number;
+  offset?: number;
+}
+
+function buildGatewayUsageQuery(params: GatewayUsageSearchParams = {}): string {
+  const queryParams = new URLSearchParams();
+
+  if (params.startDate) {
+    queryParams.set('start_date', params.startDate);
+  }
+
+  if (params.endDate) {
+    queryParams.set('end_date', params.endDate);
+  }
+
+  if (params.query) {
+    queryParams.set('query', params.query);
+  }
+
+  if (params.providerName) {
+    queryParams.set('provider_name', params.providerName);
+  }
+
+  if (params.modelAlias) {
+    queryParams.set('model_alias', params.modelAlias);
+  }
+
+  if (params.flowId) {
+    queryParams.set('flow_id', params.flowId);
+  }
+
+  if (params.runtimeSessionId) {
+    queryParams.set('runtime_session_id', params.runtimeSessionId);
+  }
+
+  if (params.runtimePrincipalId) {
+    queryParams.set('runtime_principal_id', params.runtimePrincipalId);
+  }
+
+  if (params.sessionSourceType) {
+    queryParams.set('session_source_type', params.sessionSourceType);
+  }
+
+  if (params.includeBreakdown !== undefined) {
+    queryParams.set('include_breakdown', String(params.includeBreakdown));
+  }
+
+  if (typeof params.limit === 'number') {
+    queryParams.set('limit', String(params.limit));
+  }
+
+  if (typeof params.offset === 'number') {
+    queryParams.set('offset', String(params.offset));
+  }
+
+  const queryString = queryParams.toString();
+  return queryString ? `?${queryString}` : '';
+}
+
+function buildRuntimeSessionListQuery(
+  params: RuntimeSessionListParams = {}
+): string {
+  const queryParams = new URLSearchParams();
+
+  if (params.startDate) {
+    queryParams.set('start_date', params.startDate);
+  }
+  if (params.endDate) {
+    queryParams.set('end_date', params.endDate);
+  }
+  if (params.query) {
+    queryParams.set('query', params.query);
+  }
+  if (params.sessionSourceType) {
+    queryParams.set('session_source_type', params.sessionSourceType);
+  }
+  if (params.status) {
+    queryParams.set('status', params.status);
+  }
+  if (typeof params.limit === 'number') {
+    queryParams.set('limit', String(params.limit));
+  }
+  if (typeof params.offset === 'number') {
+    queryParams.set('offset', String(params.offset));
+  }
+
+  const queryString = queryParams.toString();
+  return queryString ? `?${queryString}` : '';
+}
+
+function buildManagedAgentListQuery(
+  params: ManagedAgentListParams = {}
+): string {
+  const queryParams = new URLSearchParams();
+
+  if (params.query) {
+    queryParams.set('query', params.query);
+  }
+  if (params.tags) {
+    queryParams.set('tags', params.tags);
+  }
+  if (params.ownerUsername) {
+    queryParams.set('owner_username', params.ownerUsername);
+  }
+  if (params.agentKind) {
+    queryParams.set('agent_kind', params.agentKind);
+  }
+  if (params.lastSeenAfter) {
+    queryParams.set('last_seen_after', params.lastSeenAfter);
+  }
+  if (params.status) {
+    queryParams.set('status', params.status);
+  }
+  if (typeof params.limit === 'number') {
+    queryParams.set('limit', String(params.limit));
+  }
+  if (typeof params.offset === 'number') {
+    queryParams.set('offset', String(params.offset));
+  }
+
+  const queryString = queryParams.toString();
+  return queryString ? `?${queryString}` : '';
+}
+
+export async function getAccountGatewayUsageSummary(
+  params: GatewayUsageSummaryParams = {}
+): Promise<AccountGatewayUsageSummaryResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/account/gateway-usage/summary${buildGatewayUsageQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch account gateway usage summary');
+  }
+  return response.json();
+}
+
+export async function getCostAnalyticsSummary(
+  params: GatewayUsageSummaryParams = {}
+): Promise<CostAnalyticsSummaryResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/cost/summary${buildGatewayUsageQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch cost analytics summary');
+  }
+  return response.json();
+}
+
+export async function getModelPriceOverrides(options?: {
+  modelAlias?: string;
+  activeOnly?: boolean;
+}): Promise<ModelPriceOverride[]> {
+  const params = new URLSearchParams();
+  if (options?.modelAlias) params.set('model_alias', options.modelAlias);
+  if (options?.activeOnly) params.set('active_only', 'true');
+  const query = params.toString();
+  const response = await fetchWithAuth(
+    `/api/v1/billing/cost/pricing-overrides${query ? `?${query}` : ''}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch model price overrides');
+  }
+  return response.json();
+}
+
+export async function createModelPriceOverride(
+  data: ModelPriceOverrideCreate
+): Promise<ModelPriceOverride> {
+  const response = await fetchWithAuth(
+    '/api/v1/billing/cost/pricing-overrides',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to create model price override')
+    );
+  }
+  return response.json();
+}
+
+export async function updateModelPriceOverride(
+  id: string,
+  data: ModelPriceOverrideUpdate
+): Promise<ModelPriceOverride> {
+  const response = await fetchWithAuth(
+    `/api/v1/billing/cost/pricing-overrides/${id}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update model price override')
+    );
+  }
+  return response.json();
+}
+
+export async function deleteModelPriceOverride(id: string): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/billing/cost/pricing-overrides/${id}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to delete model price override');
+  }
+}
+
+export async function getDashboardTelemetry(): Promise<DashboardTelemetryResponse> {
+  const response = await fetchWithAuth('/api/v1/account/telemetry/dashboard');
+  if (!response.ok) {
+    throw new Error('Failed to fetch dashboard telemetry');
+  }
+  return response.json();
+}
+
+export async function getFlowGatewayUsageSummary(
+  flowId: string,
+  params: GatewayUsageSummaryParams = {}
+): Promise<FlowGatewayUsageSummaryResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/flows/${flowId}/gateway-usage/summary${buildGatewayUsageQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch flow gateway usage summary');
+  }
+  return response.json();
+}
+
+export async function getAccountGatewayUsageSearch(
+  params: GatewayUsageSearchParams = {}
+): Promise<AccountGatewayUsageSearchResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/account/gateway-usage/search${buildGatewayUsageQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch account gateway usage search results');
+  }
+  return response.json();
+}
+
+export async function getAccountRuntimeSessions(
+  params: RuntimeSessionListParams = {}
+): Promise<AccountRuntimeSessionListResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions${buildRuntimeSessionListQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch sessions');
+  }
+  return response.json();
+}
+
+export async function getAccountAgents(
+  params: ManagedAgentListParams = {}
+): Promise<AccountManagedAgentListResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/agents${buildManagedAgentListQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch managed agents');
+  }
+  return response.json();
+}
+
+export async function getAccountAgent(
+  agentId: string,
+  params: { start_date?: string; end_date?: string } = {}
+): Promise<ManagedAgentDetailResponse> {
+  const queryParams = new URLSearchParams();
+  if (params.start_date) queryParams.set('start_date', params.start_date);
+  if (params.end_date) queryParams.set('end_date', params.end_date);
+  const queryStr = queryParams.toString();
+  const response = await fetchWithAuth(
+    `/api/v1/agents/${agentId}${queryStr ? `?${queryStr}` : ''}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch managed agent');
+  }
+  return response.json();
+}
+
+export async function updateAccountAgent(
+  agentId: string,
+  payload: ManagedAgentUpdateRequest
+): Promise<ManagedAgentSummary> {
+  const response = await fetchWithAuth(`/api/v1/agents/${agentId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update managed agent');
+  }
+  return response.json();
+}
+
+export async function removeAccountAgent(
+  agentId: string
+): Promise<{ message: string }> {
+  const response = await fetchWithAuth(`/api/v1/agents/${agentId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to remove managed agent');
+  }
+  return response.json();
+}
+
+export async function sendAgentControlCommand(
+  agentId: string,
+  payload: AgentControlCommandRequest
+): Promise<AgentControlCommandResponse> {
+  const url = `/api/v1/agents/${agentId}/control/commands`;
+  const response = await fetchWithAuth(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.ok) {
+    return response.json().catch(() => ({}));
+  }
+
+  // Older backends only accept { message, metadata }. If the new shape is
+  // rejected, retry once with session targeting folded into metadata.
+  if (
+    (response.status === 400 || response.status === 422) &&
+    (payload.target_session_id || payload.session_mode)
+  ) {
+    const legacyResponse = await fetchWithAuth(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: payload.message,
+        metadata: {
+          ...(payload.metadata || {}),
+          target_session_id: payload.target_session_id ?? null,
+          session_mode: payload.session_mode ?? null,
+          start_new_session: payload.start_new_session ?? false,
+        },
+      }),
+    });
+
+    if (legacyResponse.ok) {
+      return legacyResponse.json().catch(() => ({}));
+    }
+
+    const legacyErrorData = await legacyResponse.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        legacyErrorData,
+        'Failed to send Agent Control command'
+      )
+    );
+  }
+
+  const errorData = await response.json().catch(() => ({}));
+  throw new Error(
+    extractErrorMessage(errorData, 'Failed to send Agent Control command')
+  );
+}
+
+export async function sendAgentControlVoiceTranscript(
+  agentId: string,
+  payload: AgentControlVoiceTranscriptRequest
+): Promise<AgentControlCommandResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/agents/${agentId}/control/voice-transcripts`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (response.ok) {
+    return response.json().catch(() => ({}));
+  }
+
+  const errorData = await response.json().catch(() => ({}));
+  throw new Error(
+    extractErrorMessage(
+      errorData,
+      'Failed to send Agent Control voice transcript'
+    )
+  );
+}
+
+export async function getAgentGovernance(
+  agentId: string
+): Promise<SubjectGovernanceResponse> {
+  const response = await fetchWithAuth(`/api/v1/agents/${agentId}/governance`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch agent governance');
+  }
+  return response.json();
+}
+
+export async function updateAgentGovernance(
+  agentId: string,
+  config: SubjectGovernanceConfig
+): Promise<SubjectGovernanceResponse> {
+  const response = await fetchWithAuth(`/api/v1/agents/${agentId}/governance`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update agent governance');
+  }
+  return response.json();
+}
+
+export async function getAccountRuntimeSessionDetail(
+  runtimeSessionId: string,
+  _params: RuntimeSessionDetailParams = {}
+): Promise<AccountRuntimeSessionDetailResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${runtimeSessionId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch session detail');
+  }
+  return response.json();
+}
+
+export async function getAccountRuntimeSessionInteractions(
+  runtimeSessionId: string,
+  params: RuntimeSessionInteractionsParams = {}
+): Promise<AccountGatewayUsageSearchResponse> {
+  const queryParams = new URLSearchParams();
+
+  if (params.interactionQuery) {
+    queryParams.set('interaction_query', params.interactionQuery);
+  }
+  if (typeof params.interactionLimit === 'number') {
+    queryParams.set('interaction_limit', String(params.interactionLimit));
+  }
+  if (typeof params.interactionOffset === 'number') {
+    queryParams.set('interaction_offset', String(params.interactionOffset));
+  }
+
+  const queryString = queryParams.toString();
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${runtimeSessionId}/interactions${queryString ? `?${queryString}` : ''}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch session interactions');
+  }
+  return response.json();
+}
+
+export async function getAccountRuntimeSessionActivityTimeline(
+  runtimeSessionId: string
+): Promise<RuntimeSessionActivityListResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${runtimeSessionId}/activity`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch session activity timeline');
+  }
+  return response.json();
+}
+
+export async function summarizeRuntimeSession(
+  runtimeSessionId: string
+): Promise<RuntimeSessionSummaryInsight> {
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${runtimeSessionId}/summaries`,
+    { method: 'POST' }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to summarize runtime session');
+  }
+  return response.json();
+}
+
+export async function optimizeRuntimeSession(
+  runtimeSessionId: string,
+  options: {
+    regenerate?: boolean;
+    modelId?: string | null;
+    eventIds?: string[];
+    sourceKinds?: string[];
+    fromIndex?: number;
+    toIndex?: number;
+  } = {}
+): Promise<RuntimeSessionOptimizationResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/billing/cost/runtime-sessions/${runtimeSessionId}/optimizations`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        regenerate: Boolean(options.regenerate),
+        model_id: options.modelId || null,
+        event_ids: options.eventIds || [],
+        source_kinds: options.sourceKinds || [],
+        from_index: options.fromIndex ?? null,
+        to_index: options.toIndex ?? null,
+      }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to optimize runtime session');
+  }
+  return response.json();
+}
+
+export async function updateAccountRuntimeSession(
+  runtimeSessionId: string,
+  payload: RuntimeSessionUpdateRequest
+): Promise<RuntimeSessionSummary> {
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${runtimeSessionId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to update session');
+  }
+  return response.json();
+}
+
+export async function getRuntimeSessionGatewayEvents(
+  sessionId: string,
+  options:
+    | number
+    | {
+        tail?: number;
+        limit?: number;
+        offset?: number;
+        metadataOnly?: boolean;
+      } = {}
+): Promise<FlowGatewayEventsResponse> {
+  const searchParams = new URLSearchParams();
+  if (typeof options === 'number') {
+    searchParams.set('tail', String(options));
+  } else {
+    if (options.tail !== undefined)
+      searchParams.set('tail', String(options.tail));
+    if (options.limit !== undefined)
+      searchParams.set('limit', String(options.limit));
+    if (options.offset !== undefined)
+      searchParams.set('offset', String(options.offset));
+    if (options.metadataOnly) searchParams.set('metadata_only', 'true');
+  }
+  const params = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${sessionId}/gateway-events${params}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch runtime session gateway events');
+  }
+  return response.json();
+}
+
+export async function getRuntimeSessionGatewayEventDetail(
+  sessionId: string,
+  eventId: string
+): Promise<FlowGatewayEvent> {
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${sessionId}/gateway-events/${eventId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch runtime session gateway event detail');
+  }
+  return response.json();
+}
+
+export async function summarizeRuntimeSessionGatewayEvent(
+  sessionId: string,
+  eventId: string
+): Promise<RuntimeSessionInteractionSummary> {
+  const response = await fetchWithAuth(
+    `/api/v1/runtime-sessions/${sessionId}/gateway-events/${eventId}/summary`,
+    { method: 'POST' }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to summarize runtime session gateway event');
+  }
+  return response.json();
+}
+
+export async function getTrackers() {
+  const response = await fetchWithAuth('/api/v1/trackers');
+  if (!response.ok) {
+    throw new Error('Failed to fetch trackers');
+  }
+  return response.json();
+}
+
+export async function addTracker(trackerData: any) {
+  const response = await fetchWithAuth('/api/v1/trackers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(trackerData),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to add tracker');
+  }
+  return response.json();
+}
+
+export async function updateTracker(trackerId: string, trackerData: any) {
+  const response = await fetchWithAuth(`/api/v1/trackers/${trackerId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(trackerData),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update tracker');
+  }
+  return response.json();
+}
+
+export async function deleteTracker(trackerId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/trackers/${trackerId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete tracker');
+  }
+}
+
+export async function validateTrackerToken(
+  type: string,
+  token: string,
+  url?: string,
+  username?: string,
+  id?: string
+) {
+  console.log('Validating tracker token', type, token, url, username);
+  const payload: {
+    tracker_id?: string;
+    tracker_type: string;
+    api_key: string;
+    url?: string;
+    connection_details?: { username?: string };
+  } = {
+    tracker_type: type,
+    api_key: token,
+  };
+  if (id) {
+    payload.tracker_id = id;
+  }
+  if (url) {
+    payload.url = url;
+  }
+  if (type.toLowerCase() === 'jira' && username) {
+    payload.connection_details = { username };
+  }
+
+  const response = await fetchWithAuth('/api/v1/trackers/test-and-list-orgs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || 'Failed to validate token');
+  }
+  return response.json();
+}
+
+export async function listProjectsForOrg(
+  trackerType: string,
+  token: string,
+  orgId: string,
+  url?: string,
+  username?: string,
+  trackerId?: string
+) {
+  const payload: any = {
+    tracker_id: trackerId,
+    tracker_type: trackerType,
+    api_key: token,
+    organization_identifier: orgId,
+  };
+  if (url) {
+    payload.url = url;
+  }
+  if (trackerType.toLowerCase() === 'jira' && username) {
+    payload.connection_details = { username };
+  }
+
+  const response = await fetchWithAuth(
+    '/api/v1/trackers/list-projects-for-org',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      errorData.message || 'Failed to list projects for organization'
+    );
+  }
+  return response.json();
+}
+
+export async function getDuplicateIssues(
+  status: 'opened' | 'closed' | 'all' = 'opened'
+) {
+  const response = await fetchWithAuth(
+    `/api/v1/issue-duplicates/?status=${status}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch duplicate issues');
+  }
+  return response.json();
+}
+
+export async function getIssueCount(): Promise<{ total_issues: number }> {
+  const response = await fetchWithAuth('/api/v1/issues-count');
+  if (!response.ok) {
+    throw new Error('Failed to fetch issue count');
+  }
+  return response.json();
+}
+
+export async function searchIssues(
+  params: FetchIssuesListParams
+): Promise<any[]> {
+  const queryParams = new URLSearchParams();
+
+  // Use similarity search when there's a query, fulltext otherwise
+  if (params.query && params.query.trim()) {
+    queryParams.append('search_type', 'similarity');
+    queryParams.append('embedding_type', 'issue');
+    queryParams.append('query', params.query);
+  } else {
+    // Use fulltext search with empty query to list all issues
+    queryParams.append('search_type', 'fulltext');
+    queryParams.append('query', '');
+    queryParams.append('sort', 'newest');
+  }
+
+  if (params.limit) {
+    queryParams.append('limit', params.limit.toString());
+  }
+
+  if (params.skip) {
+    queryParams.append('skip', params.skip.toString());
+  }
+
+  if (params.project_ids && params.project_ids.length > 0) {
+    params.project_ids.forEach((id) => queryParams.append('project_id', id));
+  }
+
+  if (params.status) {
+    queryParams.append('status', params.status);
+  }
+
+  const response = await fetchWithAuth(
+    `/api/v1/search?${queryParams.toString()}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch issues list');
+  }
+  const data = await response.json();
+  return data.results.map((r: any) => r.item);
+}
+
+export async function post(url: string, body: any) {
+  const response = await window.fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    // Try to extract error detail from response body
+    let errorMessage = `HTTP error! status: ${response.status}`;
+    try {
+      const errorData = await response.json();
+      if (errorData.detail) {
+        errorMessage = extractErrorMessage(errorData, errorMessage);
+      }
+    } catch (e) {
+      // If JSON parsing fails, use the default error message
+    }
+    throw new Error(errorMessage);
+  }
+  return response.json();
+}
+
+export async function detectIssueDependencies(
+  issueIds: string[]
+): Promise<DependencyResponse> {
+  const response = await fetchWithAuth('/api/v1/issue-dependencies/detect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ issue_ids: issueIds }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to detect issue dependencies')
+    );
+  }
+  return response.json();
+}
+
+export async function extendIssueDependencyScan(
+  issueIds: string[],
+  extendBy: number
+): Promise<DependencyResponse> {
+  const response = await fetchWithAuth('/api/v1/issue-dependencies/extend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ issue_ids: issueIds, extend_by: extendBy }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to extend issue dependency scan')
+    );
+  }
+  return response.json();
+}
+
+export async function commitIssueDependencies(
+  dependencies: DependencyPair[]
+): Promise<DependencyResponse> {
+  const response = await fetchWithAuth('/api/v1/issue-dependencies/commit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dependencies }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to commit issue dependencies')
+    );
+  }
+  return response.json();
+}
+
+// Account
+export async function getUserProfile() {
+  const response = await fetchWithAuth('/api/v1/auth/users/me');
+  if (!response.ok) {
+    throw new Error('Failed to fetch user profile');
+  }
+  return response.json();
+}
+
+export async function getAccountDetails() {
+  const response = await fetchWithAuth('/api/v1/account/details');
+  if (!response.ok) {
+    throw new Error('Failed to fetch account details');
+  }
+  return response.json();
+}
+
+export async function updateUserProfile(details: { full_name: string }) {
+  const response = await fetchWithAuth('/api/v1/auth/users/me', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(details),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update user profile');
+  }
+  return response.json();
+}
+
+export async function changePassword(passwords: {
+  current_password: string;
+  new_password: string;
+}) {
+  const response = await fetchWithAuth('/api/v1/auth/users/me/password', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(passwords),
+  });
+  if (response.status === 204) {
+    return;
+  }
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to change password')
+    );
+  }
+}
+
+// API Keys
+export async function getApiKeys(): Promise<ApiKey[]> {
+  const response = await fetchWithAuth('/api/v1/auth/api-keys');
+  if (!response.ok) {
+    throw new Error('Failed to fetch API keys');
+  }
+  return response.json();
+}
+
+export async function createApiKey(
+  name: string,
+  expires_at: string | null
+): Promise<ApiKey> {
+  const body = { name, expires_at };
+  const response = await fetchWithAuth('/api/v1/auth/api-keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to create API key'));
+  }
+  return response.json();
+}
+
+export async function deleteApiKey(keyId: string) {
+  const response = await fetchWithAuth(`/api/v1/auth/api-keys/${keyId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete API key');
+  }
+}
+
+export async function getApiKey(keyId: string): Promise<ApiKey> {
+  const response = await fetchWithAuth(`/api/v1/auth/api-keys/${keyId}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch API key');
+  }
+  return response.json();
+}
+
+export async function getApiKeyActivity(keyId: string): Promise<any[]> {
+  const response = await fetchWithAuth(
+    `/api/v1/auth/api-keys/${keyId}/activity`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch API key activity');
+  }
+  return response.json();
+}
+
+export async function getApiKeyGovernance(
+  keyId: string
+): Promise<SubjectGovernanceResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/auth/api-keys/${keyId}/governance`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch API key governance');
+  }
+  return response.json();
+}
+
+export async function updateApiKeyGovernance(
+  keyId: string,
+  config: SubjectGovernanceConfig
+): Promise<SubjectGovernanceResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/auth/api-keys/${keyId}/governance`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to update API key governance');
+  }
+  return response.json();
+}
+
+export async function getApiKeyGatewayUsageSummary(
+  keyId: string,
+  params: GatewayUsageSummaryParams = {}
+): Promise<ApiKeyGatewayUsageSummaryResponse> {
+  const query = new URLSearchParams();
+  if (params.startDate) query.append('start_date', params.startDate);
+  if (params.endDate) query.append('end_date', params.endDate);
+
+  const queryString = query.toString();
+  const url = `/api/v1/auth/api-keys/${keyId}/gateway-usage/summary${queryString ? `?${queryString}` : ''}`;
+
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    throw new Error('Failed to fetch API key gateway usage summary');
+  }
+  return response.json();
+}
+
+// AI Models
+export async function getAIModels(): Promise<AIModel[]> {
+  const response = await fetchWithAuth('/api/v1/ai-models');
+  if (!response.ok) {
+    throw new Error('Failed to fetch AI models');
+  }
+  return response.json();
+}
+
+export async function getAIModel(modelId: string): Promise<AIModel> {
+  const response = await fetchWithAuth(`/api/v1/ai-models/${modelId}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch AI model');
+  }
+  return response.json();
+}
+
+export async function createAIModel(model: any) {
+  const response = await fetchWithAuth('/api/v1/ai-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(model),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to create AI model')
+    );
+  }
+  return response.json();
+}
+
+export async function updateAIModel(modelId: string, model: any) {
+  const response = await fetchWithAuth(`/api/v1/ai-models/${modelId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(model),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update AI model')
+    );
+  }
+  return response.json();
+}
+
+export async function transcribeAudio(
+  audio: Blob,
+  options: { aiModelId?: string | null; filename?: string } = {}
+): Promise<SpeechToTextResponse> {
+  const formData = new FormData();
+  formData.append('audio', audio, options.filename || 'audio.webm');
+  if (options.aiModelId) {
+    formData.append('ai_model_id', options.aiModelId);
+  }
+  const response = await fetchWithAuth('/api/v1/audio/transcriptions', {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to transcribe audio')
+    );
+  }
+  return response.json();
+}
+
+export async function synthesizeSpeech(
+  request: TextToSpeechRequest
+): Promise<Blob> {
+  const response = await fetchWithAuth('/api/v1/audio/speech', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to synthesize speech')
+    );
+  }
+  return response.blob();
+}
+
+export async function deleteAIModel(modelId: string) {
+  const response = await fetchWithAuth(`/api/v1/ai-models/${modelId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to delete AI model')
+    );
+  }
+}
+
+export async function getAvailableModelsForProvider(
+  provider: string,
+  apiKey?: string,
+  modelKind: 'llm' | 'stt' | 'tts' = 'llm'
+): Promise<string[]> {
+  const params = new URLSearchParams({ model_kind: modelKind });
+  if (apiKey) {
+    params.set('api_key', apiKey);
+  }
+  const url = `/api/v1/ai-models/providers/${provider}/available-models?${params.toString()}`;
+  // Use fetch instead of fetchWithAuth since this endpoint doesn't require authentication
+  const response = await fetch(url);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to fetch available models')
+    );
+  }
+  return response.json();
+}
+
+export async function getAIModelGatewayUsageSummary(
+  modelId: string,
+  params: GatewayUsageSummaryParams = {}
+): Promise<AIModelGatewayUsageSummaryResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/ai-models/${modelId}/summary${buildGatewayUsageQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch AI model usage summary');
+  }
+  return response.json();
+}
+
+export async function getAIModelRuntimeSessions(
+  modelId: string,
+  params: RuntimeSessionListParams = {}
+): Promise<AIModelRuntimeSessionListResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/ai-models/${modelId}/runtime-sessions${buildRuntimeSessionListQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch AI model runtime sessions');
+  }
+  return response.json();
+}
+
+export async function getAIModelGatewayUsageSearch(
+  modelId: string,
+  params: GatewayUsageSearchParams = {}
+): Promise<AIModelGatewayUsageSearchResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/ai-models/${modelId}/interactions${buildGatewayUsageQuery(params)}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch AI model interactions');
+  }
+  return response.json();
+}
+
+// Flows
+export async function getFlows(): Promise<any[]> {
+  const response = await fetchWithAuth('/api/v1/flows');
+  if (!response.ok) {
+    throw new Error('Failed to fetch flows');
+  }
+  return response.json();
+}
+
+export async function getFlow(flowId: string): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/flows/${flowId}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch flow');
+  }
+  return response.json();
+}
+
+export async function createFlow(flow: any): Promise<any> {
+  const response = await fetchWithAuth('/api/v1/flows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(flow),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Failed to create flow');
+  }
+  return response.json();
+}
+
+export async function updateFlow(flowId: string, flow: any): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/flows/${flowId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(flow),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Failed to update flow');
+  }
+  return response.json();
+}
+
+export async function deleteFlow(flowId: string) {
+  const response = await fetchWithAuth(`/api/v1/flows/${flowId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete flow');
+  }
+}
+
+export async function getFlowPresets(): Promise<any[]> {
+  const response = await fetchWithAuth('/api/v1/flows/presets');
+  if (!response.ok) {
+    throw new Error('Failed to fetch flow presets');
+  }
+  return response.json();
+}
+
+export async function getFlowExecutions(options?: {
+  limit?: number;
+  skip?: number;
+  flowId?: string;
+  status?: string | string[];
+}): Promise<any[]> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) {
+    params.set('limit', options.limit.toString());
+  }
+  if (options?.skip !== undefined) {
+    params.set('skip', options.skip.toString());
+  }
+  if (options?.flowId) {
+    params.set('flow_id', options.flowId);
+  }
+  if (options?.status !== undefined) {
+    const statuses = Array.isArray(options.status)
+      ? options.status
+      : [options.status];
+    for (const status of statuses) {
+      params.append('status', status);
+    }
+  }
+  const queryString = params.toString();
+  const url = `/api/v1/flows/executions${queryString ? `?${queryString}` : ''}`;
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    throw new Error('Failed to fetch flow executions');
+  }
+  return response.json();
+}
+
+export async function getFlowExecution(executionId: string): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/flows/executions/${executionId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch flow execution');
+  }
+  return response.json();
+}
+
+export async function getFlowExecutionMetrics(executionId: string): Promise<{
+  tool_calls: number;
+  api_requests: number;
+  token_usage: {
+    total_tokens: number;
+    input_tokens: number;
+    output_tokens: number;
+  };
+  estimated_cost: number;
+  has_pricing: boolean;
+}> {
+  const response = await fetchWithAuth(
+    `/api/v1/flows/executions/${executionId}/metrics`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch execution metrics');
+  }
+  return response.json();
+}
+
+export async function getFlowExecutionLogs(
+  executionId: string,
+  options?: { tail?: number; skip?: number; limit?: number }
+): Promise<{
+  logs: any[];
+  source: 'container' | 'database';
+  has_more?: boolean;
+}> {
+  const params = new URLSearchParams();
+  if (options?.tail !== undefined)
+    params.append('tail', options.tail.toString());
+  if (options?.skip !== undefined)
+    params.append('skip', options.skip.toString());
+  if (options?.limit !== undefined)
+    params.append('limit', options.limit.toString());
+
+  const queryString = params.toString();
+  const url = `/api/v1/flows/executions/${executionId}/logs${queryString ? `?${queryString}` : ''}`;
+
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    throw new Error('Failed to fetch execution logs');
+  }
+  return response.json();
+}
+
+export async function getFlowExecutionGatewayEvents(
+  executionId: string,
+  tail?: number,
+  metadataOnly: boolean = false
+): Promise<FlowGatewayEventsResponse> {
+  const params = new URLSearchParams();
+  if (tail !== undefined) params.append('tail', tail.toString());
+  if (metadataOnly) params.append('metadata_only', 'true');
+  const paramsStr = params.toString() ? `?${params.toString()}` : '';
+
+  const response = await fetchWithAuth(
+    `/api/v1/flows/executions/${executionId}/gateway-events${paramsStr}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch execution gateway events');
+  }
+  return response.json();
+}
+
+export async function getFlowExecutionGatewayEvent(
+  executionId: string,
+  eventId: string
+): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/flows/executions/${executionId}/gateway-events/${eventId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch execution gateway event');
+  }
+  return response.json();
+}
+
+export async function triggerFlowExecution(
+  flowId: string,
+  triggerEventData?: Record<string, any>
+): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/flows/${flowId}/trigger`, {
+    method: 'POST',
+    headers: triggerEventData
+      ? { 'Content-Type': 'application/json' }
+      : undefined,
+    body: triggerEventData ? JSON.stringify(triggerEventData) : undefined,
+  });
+  if (!response.ok) {
+    throw new Error('Failed to trigger flow execution');
+  }
+  return response.json();
+}
+
+export async function sendCommandToExecution(
+  executionId: string,
+  command: string,
+  payload?: any
+): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/flows/executions/${executionId}/command`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command, payload }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to send command to execution');
+  }
+}
+
+export async function retryFlowExecution(executionId: string): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/flows/executions/${executionId}/retry`,
+    {
+      method: 'POST',
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to retry flow execution');
+  }
+  return response.json();
+}
+
+export async function cloneFlowPreset(presetId: string): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/flows/presets/${presetId}/clone`,
+    {
+      method: 'POST',
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to clone flow preset');
+  }
+  return response.json();
+}
+
+export async function listProjects(options?: {
+  organizationId?: string;
+  limit?: number;
+}): Promise<Project[]> {
+  const params = new URLSearchParams();
+  if (options?.organizationId) {
+    params.set('organization_id', options.organizationId);
+  }
+  if (options?.limit) {
+    params.set('limit', String(options.limit));
+  } else {
+    params.set('limit', '1000');
+  }
+  const query = params.toString();
+  const response = await fetchWithAuth(
+    query ? `/api/v1/projects?${query}` : '/api/v1/projects'
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch projects');
+  }
+  const projects: Project[] = await response.json();
+  return projects.map((project) => ({
+    ...project,
+    key: project.key || project.identifier,
+  }));
+}
+
+export async function syncTracker(
+  trackerId: string
+): Promise<{ status: string }> {
+  const response = await fetchWithAuth(`/api/v1/trackers/${trackerId}/sync`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    let detail = 'Failed to queue tracker sync';
+    try {
+      const body = await response.json();
+      detail =
+        (typeof body.detail === 'string' && body.detail) ||
+        body.message ||
+        detail;
+    } catch {
+      detail = `${detail} (${response.status})`;
+    }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+export async function getEmbeddingsForProjects(
+  projectIds: string[]
+): Promise<{ data: any[] } | null> {
+  const params = new URLSearchParams();
+  if (projectIds.length > 0) {
+    params.append('project_ids', projectIds.join(','));
+  }
+
+  const queryString = params.toString();
+  const url = queryString
+    ? `/api/v1/embeddings?${queryString}`
+    : '/api/v1/embeddings';
+
+  try {
+    const response = await fetchWithAuth(url);
+    if (!response.ok) {
+      console.error('Failed to fetch embeddings:', response.statusText);
+      throw new Error('Failed to fetch embeddings for projects');
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error in getEmbeddingsForProjects:', error);
+    return null;
+  }
+}
+
+export async function listOrganizations(): Promise<Organization[]> {
+  const response = await fetchWithAuth('/api/v1/organizations');
+  if (!response.ok) {
+    throw new Error('Failed to fetch organizations');
+  }
+  const data: any = await response.json();
+  return (data.items || []).map((org: Organization) => ({
+    ...org,
+    key: org.key || org.identifier,
+    identifier: org.identifier || org.key,
+  }));
+}
+
+export async function listIssueDuplicates(
+  options: {
+    limit?: number;
+    skip?: number;
+    project_ids?: string[];
+    similarity_threshold?: number;
+    status?: 'opened' | 'closed' | 'all';
+    resolution?: 'resolved' | 'unresolved' | 'all';
+  } = {}
+): Promise<DuplicatesResponse> {
+  const {
+    limit = 10,
+    skip = 0,
+    project_ids = [],
+    status = 'opened',
+    similarity_threshold = DEFAULT_SIMILARITY_THRESHOLD,
+    resolution = 'all',
+  } = options;
+
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    skip: skip.toString(),
+  });
+  project_ids.forEach((id) => params.append('project_ids', id));
+  params.append('status', status);
+  params.append('similarity_threshold', similarity_threshold.toString());
+  if (resolution && resolution !== 'all') {
+    params.append('resolution', resolution);
+  }
+
+  const response = await fetchWithAuth(
+    `/api/v1/issue-duplicates?${params.toString()}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch duplicate issues');
+  }
+  return response.json();
+}
+
+export async function checkAIVerdict(issue1_id: string, issue2_id: string) {
+  const response = await fetchWithAuth(
+    `/api/v1/issue-duplicates/check?issue1_id=${issue1_id}&issue2_id=${issue2_id}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch AI verdict');
+  }
+  return response.json();
+}
+
+export async function getProjectDuplicateStats(options: {
+  project_ids?: string[];
+  status?: 'opened' | 'closed' | 'all';
+  similarity_threshold?: number;
+}): Promise<any> {
+  const {
+    project_ids = [],
+    status = 'opened',
+    similarity_threshold = DEFAULT_SIMILARITY_THRESHOLD,
+  } = options;
+  const params = new URLSearchParams();
+  project_ids.forEach((id) => params.append('project_ids', id));
+  params.append('status', status);
+  params.append('similarity_threshold', similarity_threshold.toString());
+  const url = `/api/v1/project-duplicate-stats?${params.toString()}`;
+  console.log(url);
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    throw new Error('Failed to fetch project duplicate stats');
+  }
+  return response.json();
+}
+
+export async function dismissDuplicatePair(
+  issue1Id: string,
+  issue2Id: string
+): Promise<{ success: boolean }> {
+  console.log(`Dismissing duplicate pair: ${issue1Id} and ${issue2Id}`);
+
+  // Simulate network delay
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  // In a real implementation, you would make a call to your backend here
+  // to record the dismissal.
+
+  return Promise.resolve({ success: true });
+}
+
+export async function getResolutionSuggestion(
+  issue1_id: string,
+  issue2_id: string,
+  resolution: 'merged' | 'deconflicted'
+): Promise<any> {
+  const response = await fetchWithAuth('/api/v1/ai-suggestion', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ issue1_id, issue2_id, resolution }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to get resolution suggestion');
+  }
+
+  return response.json();
+}
+
+export async function executeIssueDuplicateResolution(
+  resolutionData: any
+): Promise<any> {
+  const response = await fetchWithAuth(
+    '/api/v1/issue-duplicates/execute-resolution',
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(resolutionData),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        errorData,
+        'Failed to execute issue duplicate resolution'
+      )
+    );
+  }
+  return response.json();
+}
+
+export async function getIssueCompliance(
+  issueId: string,
+  promptName: string
+): Promise<IssueComplianceResult> {
+  const response = await fetchWithAuth(
+    `/api/v1/issue_compliance/${issueId}?prompt_name=${promptName}`,
+    {
+      method: 'GET',
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch issue compliance');
+  }
+  return response.json();
+}
+
+export async function getComplianceImprovementSuggestion(
+  issueId: string,
+  promptName: string
+): Promise<ComplianceSuggestion> {
+  const response = await fetchWithAuth(
+    `/api/v1/issue_compliance_suggestion/${issueId}?prompt_name=${promptName}`
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        errorData,
+        'Failed to get compliance improvement suggestion'
+      )
+    );
+  }
+  return response.json();
+}
+
+export async function proposeResolution(resolutionData: any) {
+  return await fetchWithAuth('/api/v1/issue-duplicates/propose-resolution', {
+    method: 'PATCH',
+    body: JSON.stringify(resolutionData),
+  });
+}
+
+export async function updateIssueContent(
+  issueId: string,
+  title: string,
+  description: string,
+  changes: string
+): Promise<Issue> {
+  const response = await fetchWithAuth(
+    `/api/v1/issue_compliance_update/${issueId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description, changes }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update issue content')
+    );
+  }
+
+  return response.json();
+}
+
+export async function getCompliancePrompts(): Promise<
+  CompliancePromptMetadata[]
+> {
+  const response = await fetchWithAuth('/api/v1/issue_compliance_prompts');
+  if (!response.ok) {
+    throw new Error('Failed to fetch compliance prompts');
+  }
+  return response.json();
+}
+
+// Billing
+export async function fetchPlans() {
+  const response = await fetchWithAuth('/api/v1/billing/plans');
+  if (!response.ok) {
+    throw new Error('Failed to fetch plans');
+  }
+  return response.json();
+}
+
+export async function getCurrentSubscription() {
+  const response = await fetchWithAuth('/api/v1/billing/subscription');
+  if (!response.ok) {
+    if (response.status === 404) {
+      return null; // No subscription found
+    }
+    throw new Error('Failed to fetch subscription');
+  }
+  return response.json();
+}
+
+// Tools API
+export async function getTools(): Promise<any[]> {
+  const response = await fetchWithAuth('/api/v1/tools');
+  if (!response.ok) {
+    throw new Error('Failed to fetch tools');
+  }
+  return response.json();
+}
+
+export async function createToolConfiguration(config: any): Promise<any> {
+  const response = await fetchWithAuth('/api/v1/tool-configurations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to create tool configuration')
+    );
+  }
+  return response.json();
+}
+
+export async function getToolConfiguration(configId: string): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/tool-configurations/${configId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch tool configuration');
+  }
+  return response.json();
+}
+
+export async function updateToolConfiguration(
+  configId: string,
+  config: any
+): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/tool-configurations/${configId}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update tool configuration')
+    );
+  }
+  return response.json();
+}
+
+export async function deleteToolConfiguration(configId: string): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/tool-configurations/${configId}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to delete tool configuration');
+  }
+}
+
+// Tool Approval Condition API
+export async function getToolApprovalCondition(configId: string): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/tool-configurations/${configId}/approval-condition`
+  );
+  if (!response.ok) {
+    // 404 is expected if no condition exists yet
+    if (response.status === 404) {
+      return null;
+    }
+    throw new Error('Failed to fetch tool approval condition');
+  }
+  return response.json();
+}
+
+export async function updateToolApprovalCondition(
+  configId: string,
+  condition: string | null
+): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/tool-configurations/${configId}/condition`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approval_condition: condition }),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update tool approval condition')
+    );
+  }
+  return response.json();
+}
+
+// Access Rules API
+export interface AccessRule {
+  id: string;
+  account_id: string;
+  tool_configuration_id: string;
+  action: 'allow' | 'deny' | 'require_approval';
+  condition_expression: string | null;
+  condition_type: 'simple' | 'cel';
+  priority: number;
+  description: string | null;
+  is_enabled: boolean;
+  approval_workflow_id: string | null;
+}
+
+export interface AccessRuleCreate {
+  action: 'allow' | 'deny' | 'require_approval';
+  condition_expression?: string | null;
+  condition_type?: 'simple' | 'cel';
+  priority?: number;
+  description?: string | null;
+  is_enabled?: boolean;
+  approval_workflow_id?: string | null;
+}
+
+export interface AccessRuleUpdate {
+  action?: 'allow' | 'deny' | 'require_approval';
+  condition_expression?: string | null;
+  condition_type?: 'simple' | 'cel';
+  priority?: number;
+  description?: string | null;
+  is_enabled?: boolean;
+  approval_workflow_id?: string | null;
+}
+
+export async function listAccessRules(configId: string): Promise<AccessRule[]> {
+  const response = await fetchWithAuth(
+    `/api/v1/tool-configurations/${configId}/access-rules`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch access rules');
+  }
+  return response.json();
+}
+
+export async function createAccessRule(
+  configId: string,
+  rule: AccessRuleCreate
+): Promise<AccessRule> {
+  const response = await fetchWithAuth(
+    `/api/v1/tool-configurations/${configId}/access-rules`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rule),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to create access rule')
+    );
+  }
+  return response.json();
+}
+
+export async function updateAccessRule(
+  ruleId: string,
+  rule: AccessRuleUpdate
+): Promise<AccessRule> {
+  const response = await fetchWithAuth(`/api/v1/access-rules/${ruleId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rule),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update access rule')
+    );
+  }
+  return response.json();
+}
+
+export async function deleteAccessRule(ruleId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/access-rules/${ruleId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete access rule');
+  }
+}
+
+// Approval Workflows API
+export async function getApprovalWorkflows(): Promise<any[]> {
+  const response = await fetchWithAuth('/api/v1/approval-workflows');
+  if (!response.ok) {
+    throw new Error('Failed to fetch approval workflows');
+  }
+  return response.json();
+}
+
+export async function createApprovalWorkflow(workflow: any): Promise<any> {
+  const response = await fetchWithAuth('/api/v1/approval-workflows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(workflow),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to create approval workflow')
+    );
+  }
+  return response.json();
+}
+
+export async function getApprovalWorkflow(workflowId: string): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/approval-workflows/${workflowId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch approval workflow');
+  }
+  return response.json();
+}
+
+export async function updateApprovalWorkflow(
+  workflowId: string,
+  workflow: any
+): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/approval-workflows/${workflowId}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(workflow),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update approval workflow')
+    );
+  }
+  return response.json();
+}
+
+export async function deleteApprovalWorkflow(
+  workflowId: string
+): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/approval-workflows/${workflowId}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to delete approval workflow');
+  }
+}
+
+// MCP Servers API
+export async function getMCPServers(): Promise<any[]> {
+  const response = await fetchWithAuth('/api/v1/mcp-servers');
+  if (!response.ok) {
+    throw new Error('Failed to fetch MCP servers');
+  }
+  return response.json();
+}
+
+export async function createMCPServer(server: any): Promise<any> {
+  const response = await fetchWithAuth('/api/v1/mcp-servers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(server),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to create MCP server')
+    );
+  }
+  return response.json();
+}
+
+export async function getMCPServer(serverId: string): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/mcp-servers/${serverId}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch MCP server');
+  }
+  return response.json();
+}
+
+export async function updateMCPServer(
+  serverId: string,
+  server: any
+): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/mcp-servers/${serverId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(server),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to update MCP server')
+    );
+  }
+  return response.json();
+}
+
+export async function deleteMCPServer(serverId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/mcp-servers/${serverId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete MCP server');
+  }
+}
+
+export async function scanMCPServer(serverId: string): Promise<any> {
+  const response = await fetchWithAuth(`/api/v1/mcp-servers/${serverId}/scan`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to scan MCP server')
+    );
+  }
+  return response.json();
+}
+
+export async function getMCPServerTools(serverId: string): Promise<any[]> {
+  const response = await fetchWithAuth(`/api/v1/mcp-servers/${serverId}/tools`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch MCP server tools');
+  }
+  return response.json();
+}
+
+// Tools API - Get all available tools (built-in and external)
+export async function getAllTools(): Promise<any[]> {
+  const response = await fetchWithAuth('/api/v1/tools');
+  if (!response.ok) {
+    throw new Error('Failed to fetch tools');
+  }
+  return response.json();
+}
+
+// Approval Requests API
+export async function getApprovalRequest(requestId: string): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/approval-requests/${requestId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch approval request');
+  }
+  return response.json();
+}
+
+export async function listApprovalRequests(params?: {
+  status?: string;
+  execution_id?: string;
+  limit?: number;
+  skip?: number;
+}): Promise<any[]> {
+  const queryParams = new URLSearchParams();
+  if (params?.status) queryParams.append('status', params.status);
+  if (params?.execution_id)
+    queryParams.append('execution_id', params.execution_id);
+  if (params?.limit) queryParams.append('limit', params.limit.toString());
+  if (params?.skip) queryParams.append('skip', params.skip.toString());
+
+  const response = await fetchWithAuth(
+    `/api/v1/approval-requests?${queryParams.toString()}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch approval requests');
+  }
+  return response.json();
+}
+
+export async function approveRequest(
+  requestId: string,
+  comment?: string
+): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/approval-requests/${requestId}/approve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved: true, comment: comment || null }),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to approve request')
+    );
+  }
+  return response.json();
+}
+
+export async function declineRequest(
+  requestId: string,
+  comment?: string
+): Promise<any> {
+  const response = await fetchWithAuth(
+    `/api/v1/approval-requests/${requestId}/decline`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved: false, comment: comment || null }),
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to decline request')
+    );
+  }
+  return response.json();
+}
+
+// ============================================================================
+// User Management API Functions
+// ============================================================================
+
+export async function getUsers(
+  skip = 0,
+  limit = 100
+): Promise<import('./types').UserListResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/users?skip=${skip}&limit=${limit}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch users');
+  }
+  return response.json();
+}
+
+export async function getUser(userId: string): Promise<import('./types').User> {
+  const response = await fetchWithAuth(`/api/v1/users/${userId}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch user');
+  }
+  return response.json();
+}
+
+export async function createUser(
+  userData: import('./types').UserCreate
+): Promise<import('./types').User> {
+  const response = await fetchWithAuth('/api/v1/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(userData),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to create user'));
+  }
+  return response.json();
+}
+
+export async function updateUser(
+  userId: string,
+  userData: import('./types').UserUpdate
+): Promise<import('./types').User> {
+  const response = await fetchWithAuth(`/api/v1/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(userData),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to update user'));
+  }
+  return response.json();
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/users/${userId}/deactivate`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to deactivate user')
+    );
+  }
+}
+
+// ============================================================================
+// Team Management API Functions
+// ============================================================================
+
+export async function getTeams(
+  skip = 0,
+  limit = 100
+): Promise<import('./types').TeamListResponse> {
+  const response = await fetchWithAuth(
+    `/api/v1/teams?skip=${skip}&limit=${limit}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch teams');
+  }
+  return response.json();
+}
+
+export async function getTeam(teamId: string): Promise<import('./types').Team> {
+  const response = await fetchWithAuth(`/api/v1/teams/${teamId}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch team');
+  }
+  return response.json();
+}
+
+export async function createTeam(
+  teamData: import('./types').TeamCreate
+): Promise<import('./types').Team> {
+  const response = await fetchWithAuth('/api/v1/teams', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(teamData),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to create team'));
+  }
+  return response.json();
+}
+
+export async function updateTeam(
+  teamId: string,
+  teamData: import('./types').TeamUpdate
+): Promise<import('./types').Team> {
+  const response = await fetchWithAuth(`/api/v1/teams/${teamId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(teamData),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to update team'));
+  }
+  return response.json();
+}
+
+export async function deleteTeam(teamId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/teams/${teamId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to delete team'));
+  }
+}
+
+export async function getTeamMembers(
+  teamId: string
+): Promise<import('./types').TeamMember[]> {
+  const response = await fetchWithAuth(`/api/v1/teams/${teamId}/members`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch team members');
+  }
+  return response.json();
+}
+
+export async function addTeamMember(
+  teamId: string,
+  userId: string,
+  roleId?: string
+): Promise<import('./types').TeamMember> {
+  const response = await fetchWithAuth(`/api/v1/teams/${teamId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, role_id: roleId }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to add team member')
+    );
+  }
+  return response.json();
+}
+
+export async function removeTeamMember(
+  teamId: string,
+  userId: string
+): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/teams/${teamId}/members/${userId}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to remove team member')
+    );
+  }
+}
+
+export async function getTeamRoles(
+  teamId: string
+): Promise<import('./types').Role[]> {
+  const response = await fetchWithAuth(`/api/v1/teams/${teamId}/roles`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch team roles');
+  }
+  return response.json();
+}
+
+export async function assignTeamRole(
+  teamId: string,
+  roleId: string
+): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/teams/${teamId}/roles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role_id: roleId }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to assign role to team')
+    );
+  }
+}
+
+export async function removeTeamRole(
+  teamId: string,
+  roleId: string
+): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/teams/${teamId}/roles/${roleId}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to remove role from team')
+    );
+  }
+}
+
+// ============================================================================
+// Invitation Management API Functions
+// ============================================================================
+
+export async function getInvitations(
+  skip = 0,
+  limit = 100,
+  status?: 'pending' | 'accepted' | 'expired' | 'cancelled'
+): Promise<import('./types').InvitationListResponse> {
+  let url = `/api/v1/invitations?skip=${skip}&limit=${limit}`;
+  if (status) {
+    url += `&status=${status}`;
+  }
+  const response = await fetchWithAuth(url);
+  if (!response.ok) {
+    throw new Error('Failed to fetch invitations');
+  }
+  return response.json();
+}
+
+export async function createInvitation(
+  invitationData: import('./types').InvitationCreate
+): Promise<import('./types').UserInvitation> {
+  const response = await fetchWithAuth('/api/v1/invitations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(invitationData),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to create invitation')
+    );
+  }
+  return response.json();
+}
+
+export async function resendInvitation(invitationId: string): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/invitations/${invitationId}/resend`,
+    {
+      method: 'POST',
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to resend invitation')
+    );
+  }
+}
+
+export async function cancelInvitation(invitationId: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/invitations/${invitationId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to cancel invitation')
+    );
+  }
+}
+
+// ============================================================================
+// Role Management API Functions
+// ============================================================================
+
+export async function getRoles(): Promise<import('./types').RoleListResponse> {
+  const response = await fetchWithAuth('/api/v1/roles');
+  if (!response.ok) {
+    throw new Error('Failed to fetch roles');
+  }
+  return response.json();
+}
+
+export async function getUserRoles(
+  userId: string
+): Promise<import('./types').Role[]> {
+  const response = await fetchWithAuth(`/api/v1/users/${userId}/roles`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch user roles');
+  }
+  return response.json();
+}
+
+export async function assignUserRole(
+  userId: string,
+  roleId: string
+): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/users/${userId}/roles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role_id: roleId }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to assign role'));
+  }
+}
+
+export async function removeUserRole(
+  userId: string,
+  roleId: string
+): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/users/${userId}/roles/${roleId}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(errorData, 'Failed to remove role'));
+  }
+}
+
+// Features API
+export interface FeaturesResponse {
+  plugins: Array<{
+    name: string;
+    version: string;
+    description: string;
+  }>;
+  features: {
+    [key: string]: boolean | string[];
+  };
+}
+
+export async function getFeatures(): Promise<FeaturesResponse> {
+  const response = await fetchPublic('/api/v1/features');
+  if (!response.ok) {
+    throw new Error('Failed to fetch features');
+  }
+  return response.json();
+}
+
+// Account Organization API
+export interface AccountOrganization {
+  id: string;
+  organization_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getAccountOrganization(): Promise<AccountOrganization> {
+  const response = await fetchWithAuth('/api/v1/account/details');
+  if (!response.ok) {
+    throw new Error('Failed to fetch account organization');
+  }
+  return response.json();
+}
+
+export async function updateAccountOrganization(
+  details: Partial<AccountOrganization>
+): Promise<AccountOrganization> {
+  const response = await fetchWithAuth('/api/v1/account/details', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(details),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update account organization');
+  }
+  return response.json();
+}
+
+// GitHub App OAuth API
+export interface TrackerAuthMethodsResponse {
+  methods: string[];
+  github_app_configured: boolean;
+}
+
+export async function getTrackerAuthMethods(): Promise<TrackerAuthMethodsResponse> {
+  const response = await fetchWithAuth('/api/v1/trackers/auth-methods');
+  if (!response.ok) {
+    throw new Error('Failed to fetch tracker auth methods');
+  }
+  return response.json();
+}
+
+export interface GitHubAuthUrlResponse {
+  authorization_url: string;
+  state: string;
+}
+
+export async function getGitHubAuthUrl(): Promise<GitHubAuthUrlResponse> {
+  const response = await fetchWithAuth('/api/v1/auth/github/authorize');
+  if (!response.ok) {
+    throw new Error('Failed to get GitHub authorization URL');
+  }
+  return response.json();
+}
+
+export interface GitHubInstallation {
+  id: string;
+  installation_id: number;
+  target_type: string;
+  target_id: number; // GitHub org/user ID - use this for scope rules
+  target_login: string;
+  permissions: Record<string, string>;
+  repository_selection: string;
+  is_suspended: boolean;
+  created_at?: string;
+}
+
+export async function getGitHubInstallations(): Promise<GitHubInstallation[]> {
+  const response = await fetchWithAuth('/api/v1/github/installations');
+  if (!response.ok) {
+    throw new Error('Failed to fetch GitHub installations');
+  }
+  const data = await response.json();
+  return data.installations;
+}
+
+export async function getGitHubInstallation(
+  installationId: string
+): Promise<GitHubInstallation> {
+  const response = await fetchWithAuth(
+    `/api/v1/github/installations/${installationId}`
+  );
+  if (!response.ok) {
+    throw new Error('Failed to fetch GitHub installation');
+  }
+  return response.json();
+}
+
+export async function unlinkGitHubInstallation(
+  installationId: string
+): Promise<void> {
+  const response = await fetchWithAuth(
+    `/api/v1/github/installations/${installationId}`,
+    { method: 'DELETE' }
+  );
+  if (!response.ok) {
+    throw new Error('Failed to unlink GitHub installation');
+  }
+}
+
+export interface CompleteGitHubInstallationRequest {
+  installation_id: string;
+  code?: string;
+}
+
+export async function completeGitHubInstallation(
+  data: CompleteGitHubInstallationRequest
+): Promise<any> {
+  // Backend expects installation_id and optional code as query parameters
+  const params = new URLSearchParams();
+  params.set('installation_id', data.installation_id);
+  if (data.code) {
+    params.set('code', data.code);
+  }
+
+  const response = await fetchWithAuth(
+    `/api/v1/auth/github/complete-installation?${params.toString()}`,
+    {
+      method: 'POST',
+    }
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      errorData.detail || 'Failed to complete GitHub installation'
+    );
+  }
+  return response.json();
+}
+
+// Policy Generation API
+export async function generatePolicy(options: {
+  prompt: string;
+  includeCurrentConfig?: boolean;
+}): Promise<{ yaml: string; warnings: string[] }> {
+  const response = await fetchWithAuth('/api/v1/policies/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: options.prompt,
+      include_current_config: options.includeCurrentConfig ?? true,
+    }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(errorData, 'Failed to generate policy')
+    );
+  }
+  return response.json();
+}
+
+export async function generatePolicyFromAudit(options?: {
+  startDate?: string;
+  endDate?: string;
+}): Promise<{ yaml: string; warnings: string[] }> {
+  const response = await fetchWithAuth('/api/v1/policies/generate-from-audit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      start_date: options?.startDate || null,
+      end_date: options?.endDate || null,
+    }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      extractErrorMessage(
+        errorData,
+        'Failed to generate policy from audit logs'
+      )
+    );
+  }
+  return response.json();
+}
+
+export interface BudgetPolicy {
+  id: string;
+  subject_type: string;
+  subject_id: string | null;
+  model_alias: string | null;
+  period: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'all_time';
+  hard_limit_usd: number | null;
+  soft_limit_usd: number | null;
+  notify_on_soft: boolean;
+  notify_on_hard: boolean;
+  notification_emails: string[] | null;
+}
+
+export interface BudgetPolicyCreate {
+  subject_type: string;
+  subject_id: string | null;
+  model_alias: string | null;
+  period: string;
+  hard_limit_usd: number | null;
+  soft_limit_usd: number | null;
+  notify_on_soft: boolean;
+  notify_on_hard: boolean;
+  notification_emails: string[] | null;
+}
+
+export async function getBudgetPolicies(
+  subject_type?: string,
+  subject_id?: string
+): Promise<BudgetPolicy[]> {
+  const params = new URLSearchParams();
+  if (subject_type) params.append('subject_type', subject_type);
+  if (subject_id) params.append('subject_id', subject_id);
+  const q = params.toString();
+  const response = await fetchWithAuth(
+    `/api/v1/budget/policies${q ? '?' + q : ''}`
+  );
+  if (!response.ok) throw new Error('Failed to fetch budget policies');
+  return response.json();
+}
+
+export async function createBudgetPolicy(
+  data: BudgetPolicyCreate
+): Promise<BudgetPolicy> {
+  const response = await fetchWithAuth('/api/v1/budget/policies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to create budget policy');
+  return response.json();
+}
+
+export async function updateBudgetPolicy(
+  id: string,
+  data: Partial<BudgetPolicyCreate>
+): Promise<BudgetPolicy> {
+  const response = await fetchWithAuth(`/api/v1/budget/policies/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to update budget policy');
+  return response.json();
+}
+
+export async function deleteBudgetPolicy(id: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/budget/policies/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete budget policy');
+}

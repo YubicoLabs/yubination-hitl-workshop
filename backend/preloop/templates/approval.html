@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tool Approval - Preloop</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.15.0/cdn/themes/light.css" />
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.15.0/cdn/shoelace.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 700px;
+            width: 100%;
+        }
+
+        sl-card {
+            --padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1.8rem;
+            color: #333;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .status-approved {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-declined {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .info-grid {
+            display: grid;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .info-item {
+            padding: 1rem;
+            background: #f9fafb;
+            border-radius: 0.5rem;
+        }
+
+        .info-label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #6b7280;
+            margin-bottom: 0.5rem;
+        }
+
+        .info-value {
+            font-family: monospace;
+            color: #1f2937;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+
+        .actions sl-button {
+            flex: 1;
+        }
+
+        pre {
+            background: #1f2937;
+            color: #f3f4f6;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            font-size: 0.875rem;
+            text-wrap: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <sl-card>
+            <div class="header">
+                <h1>⚠️ Tool Approval Required</h1>
+                <p style="color: #6b7280; margin: 0;">Review and approve or decline this tool execution</p>
+            </div>
+
+            <div id="loading" style="text-align: center;">
+                <sl-spinner style="font-size: 3rem;"></sl-spinner>
+                <p>Loading approval request...</p>
+            </div>
+
+            <div id="error" style="display: none;">
+                <sl-alert variant="danger" open>
+                    <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
+                    <strong>Error</strong><br>
+                    <span id="error-message"></span>
+                </sl-alert>
+            </div>
+
+            <div id="content" style="display: none;">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Status</div>
+                        <div>
+                            <span id="status" class="status-badge"></span>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Tool Name</div>
+                        <div class="info-value" id="tool-name"></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Requested At</div>
+                        <div class="info-value" id="requested-at"></div>
+                    </div>
+                </div>
+
+                <div class="info-item" id="reasoning-section" style="display: none; margin-bottom: 1rem;">
+                    <div class="info-label">Agent Reasoning</div>
+                    <div class="info-value" id="agent-reasoning"></div>
+                </div>
+
+                <div class="info-item" style="margin-bottom: 2rem;">
+                    <div class="info-label">Tool Arguments</div>
+                    <pre id="tool-args"></pre>
+                </div>
+
+                <div id="comment-section">
+                    <sl-textarea id="comment" label="Comment (optional)"
+                        help-text="Add a comment explaining your decision" rows="3"></sl-textarea>
+                </div>
+
+                <div class="actions" id="actions">
+                    <sl-button variant="success" size="large" id="approve-btn">
+                        <sl-icon slot="prefix" name="check-circle"></sl-icon>
+                        Approve
+                    </sl-button>
+                    <sl-button variant="danger" size="large" id="decline-btn">
+                        <sl-icon slot="prefix" name="x-circle"></sl-icon>
+                        Decline
+                    </sl-button>
+                </div>
+
+                <div id="result" style="display: none; margin-top: 2rem;">
+                    <sl-alert id="result-alert" variant="success" open>
+                        <sl-icon slot="icon" name="check-circle"></sl-icon>
+                        <strong id="result-title"></strong><br>
+                        <span id="result-message"></span>
+                    </sl-alert>
+                </div>
+            </div>
+        </sl-card>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const requestId = window.location.pathname.split('/').pop();
+        const token = urlParams.get('token');
+
+        let approvalData = null;
+
+        function formatToolArgs(args) {
+            // Convert args to JSON string with proper formatting
+            const jsonStr = JSON.stringify(args, null, 2);
+
+            // Replace escaped newlines with actual newlines for better readability
+            // This handles strings that contain \n, \r\n, etc.
+            return jsonStr
+                .replace(/\\n/g, '\n')
+                .replace(/\\r/g, '\r')
+                .replace(/\\t/g, '\t');
+        }
+
+        async function loadApproval() {
+            try {
+                const response = await fetch(`/approval/${requestId}/data?token=${token}`);
+                if (!response.ok) {
+                    throw new Error('Failed to load approval request');
+                }
+                approvalData = await response.json();
+                displayApproval();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function displayApproval() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+
+            // Set status
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = approvalData.status;
+            statusEl.className = `status-badge status-${approvalData.status}`;
+
+            // Set tool info
+            document.getElementById('tool-name').textContent = approvalData.tool_name;
+            document.getElementById('requested-at').textContent = new Date(approvalData.requested_at).toLocaleString();
+            document.getElementById('tool-args').textContent = formatToolArgs(approvalData.tool_args);
+
+            // Show reasoning if available
+            if (approvalData.agent_reasoning) {
+                document.getElementById('reasoning-section').style.display = 'block';
+                document.getElementById('agent-reasoning').textContent = approvalData.agent_reasoning;
+            }
+
+            // Hide actions if already resolved
+            if (['approved', 'declined', 'expired', 'cancelled'].includes(approvalData.status)) {
+                document.getElementById('actions').style.display = 'none';
+                document.getElementById('comment-section').style.display = 'none';
+                showResult(
+                    approvalData.status === 'approved' ? 'success' : 'warning',
+                    `Request ${approvalData.status}`,
+                    `This approval request has already been ${approvalData.status}.`
+                );
+            }
+        }
+
+        async function submitDecision(action) {
+            const comment = document.getElementById('comment').value;
+            const btn = document.getElementById(`${action}-btn`);
+            btn.loading = true;
+
+            try {
+                const response = await fetch(
+                    `/approval/${requestId}/decide?token=${token}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action, comment: comment || null })
+                    }
+                );
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to submit decision');
+                }
+
+                const result = await response.json();
+                showResult(
+                    action === 'approve' ? 'success' : 'warning',
+                    `Request ${action}d`,
+                    `The tool execution has been ${action}d successfully.`
+                );
+                document.getElementById('actions').style.display = 'none';
+                document.getElementById('comment-section').style.display = 'none';
+
+                // Update status
+                approvalData.status = result.status;
+                displayApproval();
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                btn.loading = false;
+            }
+        }
+
+        function showResult(variant, title, message) {
+            const alertEl = document.getElementById('result-alert');
+            alertEl.variant = variant;
+            document.getElementById('result-title').textContent = title;
+            document.getElementById('result-message').textContent = message;
+            document.getElementById('result').style.display = 'block';
+        }
+
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'none';
+            document.getElementById('error-message').textContent = message;
+            document.getElementById('error').style.display = 'block';
+        }
+
+        document.getElementById('approve-btn').addEventListener('click', () => submitDecision('approve'));
+        document.getElementById('decline-btn').addEventListener('click', () => submitDecision('decline'));
+
+        // Load approval on page load
+        loadApproval();
+    </script>
+</body>
+
+</html>

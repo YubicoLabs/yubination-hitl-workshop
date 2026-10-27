@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preloop - Let agents do the work, humans make the critical decisions</title>
+  <!-- SEO Meta Tags -->
+  <meta name="description"
+    content="Preloop is an event-driven automation platform with built-in human-in-the-loop safety. AI agents respond to events across your tools automatically. When agents call sensitive operations, Preloop intercepts the request and routes it for human approval—no infrastructure changes required.">
+  <meta name="keywords" content="Preloop, MCP, AI, Issue Tracker, Jira, GitLab, Integration, Automation, API">
+
+  <!-- Open Graph Meta Tags -->
+  <meta property="og:title" content="Preloop - Let agents do the work, humans make the critical decisions">
+  <meta property="og:description"
+    content="Preloop is an event-driven automation platform with built-in human-in-the-loop safety. AI agents respond to events across your tools automatically. When agents call sensitive operations, Preloop intercepts the request and routes it for human approval—no infrastructure changes required.">
+  <meta property="og:image" content="/images/diagram.png">
+  <meta property="og:url" content="https://preloop.ai/">
+  <meta property="og:type" content="website">
+
+  <!-- Twitter Card Meta Tags -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@PreloopAI">
+  <meta name="twitter:creator" content="@PreloopAI">
+  <meta name="twitter:title" content="Preloop - Let agents do the work, humans make the critical decisions">
+  <meta name="twitter:description"
+    content="Preloop is an event-driven automation platform with built-in human-in-the-loop safety. AI agents respond to events across your tools automatically. When agents call sensitive operations, Preloop intercepts the request and routes it for human approval—no infrastructure changes required.">
+  <meta name="twitter:image" content="/images/diagram.png">
+  <link rel="shortcut icon" type="image/png" href="/assets/preloop-badge.png">
+
+  <!-- JSON-LD structured data (replaced per-route at build time by vite-plugin-brand) -->
+  <script id="preloop-structured-data" type="application/ld+json">[]</script>
+
+  <!-- Shoelace Styles & Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.15.1/cdn/themes/light.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.15.1/cdn/themes/dark.css" />
+  <script type="module"
+    src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.15.1/cdn/shoelace-autoloader.js"></script>
+
+  <!-- Critical CSS to prevent FOUC (Flash of Unstyled Content) -->
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+    }
+
+    /* Hide unhydrated web components until they're defined.
+       public-pricing-view is intentionally NOT listed here: its light-DOM
+       children are the crawler- and no-JS-fallback pricing page and must
+       remain visible while the Lit component upgrades. Once the component
+       is defined its shadow-root takes over rendering and the unslotted
+       light-DOM children are hidden automatically by the browser. */
+    landing-view:not(:defined),
+    static-view-wrapper:not(:defined),
+    static-view:not(:defined),
+    app-header:not(:defined),
+    app-footer:not(:defined) {
+      opacity: 0;
+      display: block;
+    }
+
+    /* Once defined, fade them in smoothly */
+    landing-view:defined,
+    static-view-wrapper:defined,
+    static-view:defined,
+    app-header:defined,
+    app-footer:defined,
+    public-pricing-view:defined {
+      opacity: 1;
+      transition: opacity 0.2s ease-in;
+    }
+
+    /* Loading indicator — injected by JS so it never shows in static snapshots */
+    #app-loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100vh;
+      background-color: #0d1117;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #app-loading::before {
+      content: '> ';
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 1.5rem;
+      color: #58a6ff;
+      white-space: nowrap;
+    }
+
+    #app-loading::after {
+      content: '';
+      display: inline-block;
+      width: 12px;
+      height: 24px;
+      background-color: #58a6ff;
+      animation: blink 1s step-end infinite;
+    }
+
+    #app-loading.fade-out {
+      opacity: 0;
+      transition: opacity 0.2s ease-out;
+    }
+
+    @keyframes blink {
+
+      0%,
+      50% {
+        opacity: 1;
+      }
+
+      50.01%,
+      100% {
+        opacity: 0;
+      }
+    }
+  </style>
+
+  <link rel="stylesheet" href="/src/main.css">
+</head>
+
+<body>
+  <lit-app></lit-app>
+  <script>
+    // Inject loading indicator via JS so it never appears in static snapshots
+    // (e.g. Wayback Machine) where JS doesn't execute.
+    (function () {
+      var el = document.createElement('div');
+      el.id = 'app-loading';
+      document.body.prepend(el);
+
+      function removeLoader() {
+        if (!el.parentNode) return;
+        el.classList.add('fade-out');
+        el.addEventListener('transitionend', function () { el.remove(); });
+        // Fallback if transitionend doesn't fire
+        setTimeout(function () { el.remove(); }, 300);
+      }
+
+      // Remove once lit-app is defined
+      if (customElements.get('lit-app')) {
+        removeLoader();
+      } else {
+        customElements.whenDefined('lit-app').then(removeLoader);
+      }
+
+      // Safety timeout — remove after 8s regardless
+      setTimeout(removeLoader, 8000);
+    })();
+  </script>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>

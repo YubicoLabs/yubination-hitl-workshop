@@ -1,0 +1,146 @@
+"""CRUD operations for User model."""
+
+import uuid
+from typing import List, Optional
+
+from sqlalchemy.orm import Session
+
+from ..models.user import User
+from .base import CRUDBase
+
+
+class CRUDUser(CRUDBase[User]):
+    """CRUD operations for User model."""
+
+    def get_by_username(self, db: Session, *, username: str) -> Optional[User]:
+        """Get user by username.
+
+        Args:
+            db: Database session.
+            username: Username to search for.
+
+        Returns:
+            User if found, None otherwise.
+        """
+        return db.query(User).filter(User.username == username).first()
+
+    def get_by_email(
+        self, db: Session, *, email: str, account_id: Optional[str] = None
+    ) -> Optional[User]:
+        """Get user by email.
+
+        Args:
+            db: Database session.
+            email: Email to search for.
+            account_id: Optional account ID for scoping.
+
+        Returns:
+            User if found, None otherwise.
+        """
+        query = db.query(User).filter(User.email == email)
+        if account_id:
+            query = query.filter(User.account_id == account_id)
+        return query.first()
+
+    def get_by_external_id(
+        self, db: Session, *, external_id: str, user_source: str
+    ) -> Optional[User]:
+        """Get user by external ID and source.
+
+        Args:
+            db: Database session.
+            external_id: External system's user ID.
+            user_source: Source of authentication (ldap, ad, saml, oauth).
+
+        Returns:
+            User if found, None otherwise.
+        """
+        return (
+            db.query(User)
+            .filter(User.external_id == external_id, User.user_source == user_source)
+            .first()
+        )
+
+    def get_by_account(
+        self, db: Session, *, account_id: str, skip: int = 0, limit: int = 100
+    ) -> List[User]:
+        """Get all users for an account.
+
+        Args:
+            db: Database session.
+            account_id: Account ID.
+            skip: Number of records to skip.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of users.
+        """
+        return (
+            db.query(User)
+            .filter(User.account_id == account_id)
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    def get_active_by_account(
+        self, db: Session, *, account_id: str, skip: int = 0, limit: int = 100
+    ) -> List[User]:
+        """Get all active users for an account.
+
+        Args:
+            db: Database session.
+            account_id: Account ID.
+            skip: Number of records to skip.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of active users.
+        """
+        return (
+            db.query(User)
+            .filter(User.account_id == account_id, User.is_active)
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    def deactivate(self, db: Session, *, user_id: uuid.UUID) -> Optional[User]:
+        """Deactivate a user (soft delete).
+
+        Args:
+            db: Database session.
+            user_id: User ID to deactivate.
+
+        Returns:
+            Deactivated user if found, None otherwise.
+        """
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.is_active = False
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        return user
+
+    def activate(self, db: Session, *, user_id: uuid.UUID) -> Optional[User]:
+        """Activate a user.
+
+        Args:
+            db: Database session.
+            user_id: User ID to activate.
+
+        Returns:
+            Activated user if found, None otherwise.
+        """
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.is_active = True
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        return user
+
+
+# Create instance
+crud_user = CRUDUser(User)

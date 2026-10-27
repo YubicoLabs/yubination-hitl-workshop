@@ -1,0 +1,845 @@
+"""Managed-agent control-plane WebSocket and operator command endpoints."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+from starlette import status
+
+from preloop.api.auth import get_current_active_user
+from preloop.api.auth.jwt import (
+    RuntimeBearerAuthContext,
+    authenticate_runtime_bearer_token,
+)
+from preloop.models import models
+from preloop.models.crud import (
+    crud_managed_agent,
+    crud_managed_agent_enrollment,
+    crud_runtime_session,
+    crud_runtime_session_activity,
+)
+from preloop.models.db.session import get_db_session
+from preloop.schemas.agent_control import (
+    AgentControlCommandResponse,
+    AgentControlEnvelope,
+    AgentControlEnvelopeType,
+    AgentControlInboundEnvelope,
+    AgentControlSendMessageRequest,
+    AgentControlSessionMode,
+    AgentControlVoiceTranscriptRequest,
+)
+from preloop.services.account_realtime import (
+    ACCOUNT_TOPIC_AGENT_CONTROL,
+    build_account_event,
+    emit_account_event,
+)
+from preloop.sync.services.event_bus import get_nats_client
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+HEARTBEAT_TOUCH_INTERVAL = timedelta(seconds=15)
+SUPPORTED_CONTROL_AGENT_KINDS = {"hermes", "openclaw"}
+
+
+@dataclass(frozen=True)
+class AgentControlConnectionContext:
+    """Stable connection identifiers that survive managed-agent deletion."""
+
+    account_id: str
+    managed_agent_id: str
+    runtime_session_id: str
+    session_source_type: str
+    session_source_id: str
+    managed_agent_session_source_type: str
+    managed_agent_session_source_id: str
+
+
+def _connection_context_from_auth(
+    context: RuntimeBearerAuthContext,
+) -> AgentControlConnectionContext:
+    """Capture connection identifiers before ORM rows can be deleted."""
+    return AgentControlConnectionContext(
+        account_id=str(context.runtime_session.account_id),
+        managed_agent_id=str(context.managed_agent.id),
+        runtime_session_id=str(context.runtime_session.id),
+        session_source_type=context.runtime_session.session_source_type,
+        session_source_id=context.runtime_session.session_source_id,
+        managed_agent_session_source_type=context.managed_agent.session_source_type,
+        managed_agent_session_source_id=context.managed_agent.session_source_id,
+    )
+
+
+def _agent_has_control_config(db: Session, *, account_id: str, agent: Any) -> bool:
+    agent_kind = str(agent.agent_kind or agent.session_source_type or "").lower()
+    if agent_kind not in SUPPORTED_CONTROL_AGENT_KINDS:
+        return False
+
+    enrollments = (
+        crud_managed_agent_enrollment.get_latest_for_agent_by_type(
+            db,
+            account_id=account_id,
+            agent_id=str(agent.id),
+            enrollment_type="cli_managed_config",
+        )
+        or crud_managed_agent_enrollment.get_latest_for_agent(
+            db, account_id=account_id, agent_id=str(agent.id)
+        ),
+        crud_managed_agent_enrollment.get_latest_for_agent_by_type(
+            db,
+            account_id=account_id,
+            agent_id=str(agent.id),
+            enrollment_type="runtime_plugin_control",
+        ),
+    )
+    for enrollment in enrollments:
+        if enrollment is None:
+            continue
+        validation = (
+            enrollment.validation_result
+            if isinstance(enrollment.validation_result, dict)
+            else {}
+        )
+        validation_control_ready = bool(
+            validation.get("control_channel_configured")
+            or (
+                validation.get("control_plugin_verified")
+                and validation.get("control_ws_url_ok")
+                and validation.get("control_bearer_token_ok")
+            )
+        )
+        if validation_control_ready:
+            return True
+
+    # A CLI-written config without validation means the install is intentional
+    # but the runtime plugin has not been proven available yet. Keep command
+    # routing closed until the adapter reports the validation flags above.
+    return False
+
+
+class AgentControlConnectionManager:
+    """In-process registry for currently connected managed agents."""
+
+    def __init__(self) -> None:
+        self._connections: dict[str, WebSocket] = {}
+        self._agent_connections: dict[str, str] = {}
+        self._connection_agents: dict[str, str] = {}
+        self._lock = asyncio.Lock()
+
+    async def connect(self, *, managed_agent_id: str, websocket: WebSocket) -> str:
+        """Register one accepted managed-agent WebSocket."""
+        connection_id = str(uuid.uuid4())
+        async with self._lock:
+            previous_connection_id = self._agent_connections.get(managed_agent_id)
+            if previous_connection_id:
+                self._connections.pop(previous_connection_id, None)
+                self._connection_agents.pop(previous_connection_id, None)
+            self._connections[connection_id] = websocket
+            self._agent_connections[managed_agent_id] = connection_id
+            self._connection_agents[connection_id] = managed_agent_id
+        return connection_id
+
+    async def disconnect(self, connection_id: str) -> bool:
+        """Remove one connection if it is still the active binding."""
+        async with self._lock:
+            managed_agent_id = self._connection_agents.pop(connection_id, None)
+            self._connections.pop(connection_id, None)
+            if managed_agent_id is None:
+                return False
+            if self._agent_connections.get(managed_agent_id) == connection_id:
+                self._agent_connections.pop(managed_agent_id, None)
+                return True
+            return False
+
+    async def send_to_agent(
+        self, *, managed_agent_id: str, envelope: AgentControlEnvelope
+    ) -> bool:
+        """Send one envelope to a locally connected managed agent."""
+        async with self._lock:
+            connection_id = self._agent_connections.get(managed_agent_id)
+            websocket = self._connections.get(connection_id or "")
+        if websocket is None:
+            return False
+        await websocket.send_json(envelope.model_dump(mode="json"))
+        return True
+
+
+agent_control_manager = AgentControlConnectionManager()
+
+
+def _extract_bearer_token(websocket: WebSocket) -> Optional[str]:
+    auth_header = websocket.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    query_token = websocket.query_params.get("token")
+    if query_token:
+        logger.warning(
+            "Agent Control WebSocket authenticated via ?token= query parameter; "
+            "prefer Authorization: Bearer and redact token query params from "
+            "reverse-proxy access logs"
+        )
+    return query_token or None
+
+
+def _connection_envelope(
+    connection: AgentControlConnectionContext,
+    *,
+    envelope_type: AgentControlEnvelopeType,
+    name: str,
+    message_id: Optional[str] = None,
+    payload: Optional[dict[str, Any]] = None,
+) -> AgentControlEnvelope:
+    return AgentControlEnvelope(
+        type=envelope_type,
+        name=name,
+        message_id=message_id or str(uuid.uuid4()),
+        account_id=connection.account_id,
+        managed_agent_id=connection.managed_agent_id,
+        runtime_session_id=connection.runtime_session_id,
+        session_source_type=connection.session_source_type,
+        session_source_id=connection.session_source_id,
+        timestamp=datetime.now(UTC),
+        payload=payload or {},
+    )
+
+
+def _operator_command_envelope(
+    agent: Any,
+    *,
+    name: str,
+    payload: dict[str, Any],
+) -> AgentControlEnvelope:
+    if agent.runtime_session_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Managed agent is not online",
+        )
+    return AgentControlEnvelope(
+        type="command",
+        name=name,
+        message_id=str(uuid.uuid4()),
+        account_id=agent.account_id,
+        managed_agent_id=agent.id,
+        runtime_session_id=agent.runtime_session_id,
+        session_source_type=agent.session_source_type,
+        session_source_id=agent.session_source_id,
+        timestamp=datetime.now(UTC),
+        payload=payload,
+    )
+
+
+def _touch_presence(
+    db: Session,
+    context: RuntimeBearerAuthContext,
+    *,
+    observed_at: datetime,
+    commit: bool = True,
+) -> None:
+    crud_runtime_session.touch_activity(
+        db,
+        account_id=context.runtime_session.account_id,
+        runtime_session_id=context.runtime_session.id,
+        observed_at=observed_at,
+        min_update_interval=HEARTBEAT_TOUCH_INTERVAL,
+        commit=False,
+    )
+    crud_managed_agent.touch_last_seen_for_principal(
+        db,
+        account_id=context.runtime_session.account_id,
+        session_source_type=context.managed_agent.session_source_type,
+        session_source_id=context.managed_agent.session_source_id,
+        runtime_session_id=context.runtime_session.id,
+        observed_at=observed_at,
+        commit=False,
+    )
+    if commit:
+        db.commit()
+
+
+def _mark_control_verified_from_capabilities(
+    db: Session,
+    context: RuntimeBearerAuthContext,
+    inbound: AgentControlInboundEnvelope,
+) -> None:
+    """Treat a live capabilities envelope as runtime-plugin verification."""
+    if inbound.type != "presence" or inbound.name != "capabilities":
+        return
+
+    agent_kind = str(
+        context.managed_agent.agent_kind
+        or context.managed_agent.session_source_type
+        or context.runtime_session.session_source_type
+        or ""
+    ).lower()
+    if agent_kind not in SUPPORTED_CONTROL_AGENT_KINDS:
+        return
+
+    latest_enrollment = crud_managed_agent_enrollment.get_latest_for_agent_by_type(
+        db,
+        account_id=str(context.runtime_session.account_id),
+        agent_id=str(context.managed_agent.id),
+        enrollment_type="cli_managed_config",
+    ) or crud_managed_agent_enrollment.get_latest_for_agent_by_type(
+        db,
+        account_id=str(context.runtime_session.account_id),
+        agent_id=str(context.managed_agent.id),
+        enrollment_type="runtime_plugin_control",
+    )
+    validation_result = {
+        **(
+            latest_enrollment.validation_result
+            if latest_enrollment is not None
+            and isinstance(latest_enrollment.validation_result, dict)
+            else {}
+        ),
+        "control_channel_configured": True,
+        "control_plugin_installed": True,
+        "control_plugin_verified": True,
+        "control_plugin_verification": "verified_by_runtime_connection",
+        "control_ws_url_ok": True,
+        "control_bearer_token_ok": True,
+        "control_runtime_principal_id_ok": True,
+        "control_runtime_session_id_present": True,
+    }
+    if latest_enrollment is not None:
+        latest_enrollment.status = "validated"
+        latest_enrollment.validation_result = validation_result
+        latest_enrollment.last_validated_at = datetime.now(UTC)
+        db.add(latest_enrollment)
+        db.commit()
+        return
+
+    crud_managed_agent_enrollment.create_for_agent(
+        db,
+        account_id=context.runtime_session.account_id,
+        agent_id=context.managed_agent.id,
+        created_by_user_id=context.user.id,
+        enrollment_type="runtime_plugin_control",
+        adapter_key=agent_kind,
+        status="validated",
+        target_config_path=context.runtime_session.session_reference,
+        discovered_config={
+            "session_source_type": context.runtime_session.session_source_type,
+            "session_source_id": context.runtime_session.session_source_id,
+            "runtime_principal_id": context.runtime_session.runtime_principal_id,
+        },
+        managed_config={
+            "preloop": {
+                "control": {
+                    "enabled": True,
+                    "runtime": agent_kind,
+                    "control_ws_url": "/api/v1/agents/control/ws",
+                    "managed_agent_id": str(context.managed_agent.id),
+                    "runtime_session_id": str(context.runtime_session.id),
+                    "runtime_principal_id": context.runtime_session.runtime_principal_id,
+                }
+            }
+        },
+        validation_result=validation_result,
+        restore_available=False,
+        last_applied_at=datetime.now(UTC),
+        last_validated_at=datetime.now(UTC),
+        commit=True,
+    )
+
+
+async def _publish_command(
+    envelope: AgentControlEnvelope,
+) -> Optional[str]:
+    subject = f"agent-control.commands.{envelope.managed_agent_id}"
+    try:
+        nats_client = await get_nats_client()
+        if not nats_client or not nats_client.is_connected:
+            return None
+        await nats_client.publish(
+            subject,
+            json.dumps(envelope.model_dump(mode="json")).encode("utf-8"),
+        )
+        return subject
+    except Exception:
+        logger.exception("Failed to publish managed-agent command")
+        return None
+
+
+async def _subscribe_to_commands(
+    *,
+    managed_agent_id: str,
+    websocket: WebSocket,
+) -> Any:
+    subject = f"agent-control.commands.{managed_agent_id}"
+    try:
+        nats_client = await get_nats_client()
+        if not nats_client or not nats_client.is_connected:
+            return None
+
+        async def forward_command(msg: Any) -> None:
+            try:
+                payload = json.loads(msg.data.decode())
+                await websocket.send_json(payload)
+            except Exception:
+                logger.exception("Failed to forward managed-agent command")
+
+        return await nats_client.subscribe(subject, cb=forward_command)
+    except Exception:
+        logger.debug("Managed-agent command subscription unavailable", exc_info=True)
+        return None
+
+
+def _persist_agent_control_result(
+    db: Session,
+    context: RuntimeBearerAuthContext,
+    inbound: AgentControlInboundEnvelope,
+) -> None:
+    if inbound.type != "status" or inbound.name not in {
+        "command_result",
+        "command_error",
+    }:
+        return
+
+    command_id = inbound.payload.get("command_id")
+    if not isinstance(command_id, str) or not command_id.strip():
+        return
+
+    default_status = "failed" if inbound.name == "command_error" else "completed"
+    result_status = str(inbound.payload.get("status") or default_status)
+    reply_text = inbound.payload.get("reply_text")
+    error_text = inbound.payload.get("error")
+    message = None
+    if isinstance(reply_text, str) and reply_text.strip():
+        message = reply_text.strip()
+    elif isinstance(error_text, str) and error_text.strip():
+        message = error_text.strip()
+
+    crud_runtime_session_activity.log_agent_control_result(
+        db,
+        account_id=context.runtime_session.account_id,
+        command_id=command_id.strip(),
+        fallback_runtime_session_id=context.runtime_session.id,
+        status=result_status,
+        message=message,
+        metadata=inbound.payload,
+    )
+
+
+async def _emit_agent_message(
+    db: Session,
+    context: RuntimeBearerAuthContext,
+    connection: AgentControlConnectionContext,
+    inbound: AgentControlInboundEnvelope,
+) -> None:
+    if inbound.type == "heartbeat":
+        return
+    _persist_agent_control_result(db, context, inbound)
+    event_type = f"agent_control_{inbound.type}"
+    emit_account_event(
+        build_account_event(
+            account_id=connection.account_id,
+            topic=ACCOUNT_TOPIC_AGENT_CONTROL,
+            event_type=event_type,
+            payload={
+                "name": inbound.name or inbound.type,
+                "message_id": inbound.message_id,
+                "agent_payload": inbound.payload,
+            },
+            managed_agent_id=connection.managed_agent_id,
+            runtime_session_id=connection.runtime_session_id,
+            session_source_type=connection.session_source_type,
+            session_source_id=connection.session_source_id,
+        )
+    )
+
+
+@router.websocket("/agents/control/ws")
+async def managed_agent_control_websocket(
+    websocket: WebSocket,
+    db: Session = Depends(get_db_session),
+) -> None:
+    """Keep one managed agent online for low-latency operator commands."""
+    token = _extract_bearer_token(websocket)
+    if token is None:
+        await websocket.close(code=1008, reason="Runtime bearer token required")
+        return
+
+    try:
+        context = authenticate_runtime_bearer_token(
+            db,
+            token,
+            enforce_current_binding=False,
+        )
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=str(exc.detail))
+        return
+
+    await websocket.accept()
+    connection = _connection_context_from_auth(context)
+    connection_id = await agent_control_manager.connect(
+        managed_agent_id=connection.managed_agent_id,
+        websocket=websocket,
+    )
+    command_subscription = await _subscribe_to_commands(
+        managed_agent_id=connection.managed_agent_id,
+        websocket=websocket,
+    )
+
+    now = datetime.now(UTC)
+    _touch_presence(db, context, observed_at=now)
+    connected = _connection_envelope(
+        connection,
+        envelope_type="presence",
+        name="connected",
+        payload={"status": "online"},
+    )
+    await websocket.send_json(connected.model_dump(mode="json"))
+    emit_account_event(
+        build_account_event(
+            account_id=connection.account_id,
+            topic=ACCOUNT_TOPIC_AGENT_CONTROL,
+            event_type="managed_agent_online",
+            payload=connected.model_dump(mode="json"),
+            managed_agent_id=connection.managed_agent_id,
+            runtime_session_id=connection.runtime_session_id,
+        )
+    )
+
+    try:
+        while True:
+            try:
+                raw_message = await asyncio.wait_for(
+                    websocket.receive_json(), timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+                continue
+
+            try:
+                inbound = AgentControlInboundEnvelope.model_validate(raw_message)
+            except ValidationError as exc:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "name": "invalid_envelope",
+                        "error": exc.errors(),
+                    }
+                )
+                continue
+
+            try:
+                _touch_presence(db, context, observed_at=datetime.now(UTC))
+                _mark_control_verified_from_capabilities(db, context, inbound)
+            except Exception:
+                logger.info(
+                    "Managed agent %s deleted during control websocket; closing",
+                    connection.managed_agent_id,
+                )
+                break
+            await _emit_agent_message(db, context, connection, inbound)
+            if inbound.type == "heartbeat":
+                ack = _connection_envelope(
+                    connection,
+                    envelope_type="ack",
+                    name="heartbeat",
+                    message_id=inbound.message_id,
+                    payload={"status": "ok"},
+                )
+                await websocket.send_json(ack.model_dump(mode="json"))
+    except WebSocketDisconnect:
+        logger.info("Managed-agent control WebSocket disconnected")
+    finally:
+        if command_subscription is not None:
+            try:
+                await command_subscription.unsubscribe()
+            except Exception:
+                logger.debug("Failed to unsubscribe agent command subscription")
+        removed_active = await agent_control_manager.disconnect(connection_id)
+        if removed_active:
+            crud_managed_agent.clear_runtime_session_binding(
+                db,
+                account_id=connection.account_id,
+                session_source_type=connection.managed_agent_session_source_type,
+                session_source_id=connection.managed_agent_session_source_id,
+                runtime_session_id=connection.runtime_session_id,
+                commit=True,
+            )
+            emit_account_event(
+                build_account_event(
+                    account_id=connection.account_id,
+                    topic=ACCOUNT_TOPIC_AGENT_CONTROL,
+                    event_type="managed_agent_offline",
+                    payload={
+                        "managed_agent_id": connection.managed_agent_id,
+                        "runtime_session_id": connection.runtime_session_id,
+                    },
+                    managed_agent_id=connection.managed_agent_id,
+                    runtime_session_id=connection.runtime_session_id,
+                )
+            )
+
+
+def _resolve_session_mode(
+    db: Session,
+    *,
+    account_id: str,
+    agent: Any,
+    request: AgentControlSendMessageRequest,
+) -> AgentControlSessionMode:
+    if request.start_new_session:
+        return "new"
+    if request.target_session_id is None:
+        return "current"
+
+    target_session = crud_runtime_session.get_account_session(
+        db,
+        account_id=account_id,
+        runtime_session_id=str(request.target_session_id),
+    )
+    if target_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Target runtime session not found",
+        )
+    source_matches = (
+        target_session.session_source_type == agent.session_source_type
+        and target_session.session_source_id == agent.session_source_id
+    )
+    principal_matches = (
+        target_session.runtime_principal_type == agent.session_source_type
+        and target_session.runtime_principal_id == agent.session_source_id
+    )
+    if not source_matches and not principal_matches:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target runtime session does not belong to this managed agent",
+        )
+    return "existing"
+
+
+def _command_history_session(
+    db: Session,
+    *,
+    agent: Any,
+    request: AgentControlSendMessageRequest,
+) -> Optional[models.RuntimeSession]:
+    if request.target_session_id is not None:
+        return crud_runtime_session.get_account_session(
+            db,
+            account_id=str(agent.account_id),
+            runtime_session_id=str(request.target_session_id),
+        )
+    if not request.start_new_session:
+        if agent.runtime_session_id is None:
+            return None
+        return crud_runtime_session.get_account_session(
+            db,
+            account_id=str(agent.account_id),
+            runtime_session_id=str(agent.runtime_session_id),
+        )
+
+    now = datetime.now(UTC)
+    command_session_id = f"{agent.session_source_id}-{uuid.uuid4()}"
+    return crud_runtime_session.upsert_by_source(
+        db,
+        account_id=agent.account_id,
+        session_source_type=agent.session_source_type,
+        session_source_id=command_session_id,
+        session_reference="Agent Control new session",
+        runtime_principal_type=agent.session_source_type,
+        runtime_principal_id=agent.session_source_id,
+        runtime_principal_name=agent.display_name,
+        started_at=now,
+        last_activity_at=now,
+    )
+
+
+async def _route_managed_agent_prompt(
+    *,
+    agent_id: str,
+    request: AgentControlSendMessageRequest,
+    current_user: models.User,
+    db: Session,
+) -> AgentControlCommandResponse:
+    agent = crud_managed_agent.get_for_account(
+        db,
+        account_id=str(current_user.account_id),
+        agent_id=agent_id,
+    )
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Managed agent not found",
+        )
+    if agent.lifecycle_state != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Managed agent is not active",
+        )
+    if not _agent_has_control_config(
+        db, account_id=str(current_user.account_id), agent=agent
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Managed agent does not have an Agent Control plugin configured",
+        )
+
+    session_mode = _resolve_session_mode(
+        db,
+        account_id=str(current_user.account_id),
+        agent=agent,
+        request=request,
+    )
+    envelope = _operator_command_envelope(
+        agent,
+        name="send_message",
+        payload={
+            "text": request.message,
+            "metadata": request.metadata,
+            "input_mode": request.input_mode,
+            "session_mode": session_mode,
+            "target_session_id": str(request.target_session_id)
+            if request.target_session_id
+            else None,
+            "start_new_session": request.start_new_session,
+            "voice": request.voice,
+        },
+    )
+    local_delivery = await agent_control_manager.send_to_agent(
+        managed_agent_id=str(agent.id),
+        envelope=envelope,
+    )
+    subject = None
+    if not local_delivery:
+        subject = await _publish_command(envelope)
+        if subject is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Managed agent command channel is unavailable",
+            )
+
+    history_session = _command_history_session(db, agent=agent, request=request)
+    if history_session is not None:
+        crud_runtime_session_activity.log_agent_control_message(
+            db,
+            account_id=current_user.account_id,
+            runtime_session_id=history_session.id,
+            message=request.message,
+            status="delivered" if local_delivery else "queued",
+            metadata={
+                "command_id": envelope.message_id,
+                "managed_agent_id": str(agent.id),
+                "agent_name": agent.display_name,
+                "input_mode": request.input_mode,
+                "session_mode": session_mode,
+                "target_session_id": str(request.target_session_id)
+                if request.target_session_id
+                else None,
+                "start_new_session": request.start_new_session,
+                "source_metadata": request.metadata,
+                "local_delivery": local_delivery,
+                "published": subject is not None,
+                "subject": subject,
+            },
+        )
+
+    emit_account_event(
+        build_account_event(
+            account_id=str(current_user.account_id),
+            topic=ACCOUNT_TOPIC_AGENT_CONTROL,
+            event_type="managed_agent_command_sent",
+            payload=envelope.model_dump(mode="json"),
+            managed_agent_id=str(agent.id),
+            runtime_session_id=str(agent.runtime_session_id)
+            if agent.runtime_session_id
+            else None,
+        )
+    )
+    return AgentControlCommandResponse(
+        command_id=envelope.message_id,
+        managed_agent_id=agent.id,
+        runtime_session_id=envelope.runtime_session_id,
+        target_session_id=(
+            history_session.id
+            if request.start_new_session and history_session is not None
+            else request.target_session_id
+        ),
+        session_mode=session_mode,
+        subject=subject,
+        local_delivery=local_delivery,
+        published=subject is not None,
+        command_envelope=envelope,
+    )
+
+
+@router.post(
+    "/agents/{agent_id}/control/commands",
+    response_model=AgentControlCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def send_managed_agent_command(
+    agent_id: str,
+    request: AgentControlSendMessageRequest,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db_session),
+) -> AgentControlCommandResponse:
+    """Backward-compatible route for sending text commands to an agent."""
+    return await _route_managed_agent_prompt(
+        agent_id=agent_id,
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.post(
+    "/agents/{agent_id}/control/prompts",
+    response_model=AgentControlCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def send_managed_agent_prompt(
+    agent_id: str,
+    request: AgentControlSendMessageRequest,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db_session),
+) -> AgentControlCommandResponse:
+    """Route a text prompt to the current, existing, or next agent session."""
+    return await _route_managed_agent_prompt(
+        agent_id=agent_id,
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.post(
+    "/agents/{agent_id}/control/voice-transcripts",
+    response_model=AgentControlCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def send_managed_agent_voice_transcript(
+    agent_id: str,
+    request: AgentControlVoiceTranscriptRequest,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db_session),
+) -> AgentControlCommandResponse:
+    """Mobile-friendly alias that routes a voice transcript as a prompt."""
+    prompt_request = AgentControlSendMessageRequest(
+        message=request.transcript,
+        metadata=request.metadata,
+        target_session_id=request.target_session_id,
+        start_new_session=request.start_new_session,
+        input_mode="voice_transcript",
+        voice=request.voice,
+    )
+    return await _route_managed_agent_prompt(
+        agent_id=agent_id,
+        request=prompt_request,
+        current_user=current_user,
+        db=db,
+    )
