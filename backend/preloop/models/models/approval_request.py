@@ -5,7 +5,16 @@ import uuid
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import String, DateTime, Text, ForeignKey, Enum as SQLEnum
+from sqlalchemy import (
+    Boolean,
+    Integer,
+    LargeBinary,
+    String,
+    DateTime,
+    Text,
+    ForeignKey,
+    Enum as SQLEnum,
+)
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -81,6 +90,16 @@ class ApprovalRequest(Base):
         comment="Arguments passed to the tool",
     )
 
+    server_recorded_context: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        default=None,
+        comment=(
+            "Immutable requester and matched-policy context recorded by the server "
+            "when approval was created; not cryptographically bound to intent proofs"
+        ),
+    )
+
     agent_reasoning: Mapped[Optional[str]] = mapped_column(
         Text,
         nullable=True,
@@ -121,6 +140,20 @@ class ApprovalRequest(Base):
         DateTime,
         nullable=True,
         comment="When the approval was resolved (approved/declined)",
+    )
+
+    decided_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("user.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="User whose vote produced the final human decision",
+    )
+
+    decided_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When the request reached its final approved or declined state",
     )
 
     expires_at: Mapped[Optional[datetime]] = mapped_column(
@@ -172,6 +205,103 @@ class ApprovalRequest(Base):
         comment="Secure token for public approval links",
     )
 
+    intent_hash_hex: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+        comment=(
+            "SHA-256 hex digest of the RFC 8785 JCS-canonicalized intent envelope. "
+            "Null for legacy requests created before this feature."
+        ),
+    )
+
+    # Step-up verification fields
+    step_up_required: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="Whether this request requires hardware step-up before approval",
+    )
+    step_up_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="Whether step-up verification has been completed",
+    )
+    step_up_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When step-up verification was completed",
+    )
+    step_up_key_name: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Name of the security key used for step-up",
+    )
+    step_up_key_id_tail: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Tail of the credential ID used for step-up (for audit display)",
+    )
+
+    # Assertion bytes — persisted at step_up_complete time for audit re-verification
+    step_up_challenge_nonce: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary(32),
+        nullable=True,
+        comment="32-byte nonce; expected challenge = SHA-256(intent_hash_bytes || nonce)",
+    )
+    step_up_client_data_json: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment="Raw clientDataJSON bytes signed by the authenticator",
+    )
+    step_up_authenticator_data: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment="Raw authenticatorData bytes signed by the authenticator",
+    )
+    step_up_signature: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment="Raw ECDSA signature bytes from the FIDO2 assertion",
+    )
+
+    # ARKG previewSign step-up fields (webauthn_arkg_preview protocol)
+    arkg_step_up_signature: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment="ES256 signature from previewSign GetAssertion — signs tbs prehash",
+    )
+    arkg_step_up_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="Whether ARKG previewSign step-up has been cryptographically verified",
+    )
+    arkg_step_up_derived_pk: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment="P-256 uncompressed public key (65 bytes) from previewSign assertion",
+    )
+
+    # Authenticator sign counter at step-up time — stored for clone-detection audit.
+    # A regressing counter is a FIDO2 security alert (potential credential cloning).
+    step_up_sign_count: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Authenticator sign counter at the time of step-up",
+    )
+
+    # Full credential_id bytes — enables direct FK lookup in the receipt endpoint
+    # instead of the probabilistic 8-character tail match.
+    step_up_credential_id: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary,
+        nullable=True,
+        comment="Full credential_id bytes of the authenticator used for step-up",
+    )
+
     # AI decision tracking fields
     decided_by_ai: Mapped[bool] = mapped_column(
         nullable=False,
@@ -194,6 +324,76 @@ class ApprovalRequest(Base):
         comment="AI's reasoning for the approval/denial decision",
     )
 
+    # ── Intent verifier fields (Phase 0: rule-based; Phase 1: LLM) ───────────
+    # These are distinct from the decided_by_ai / ai_reasoning fields above.
+    # decided_by_ai = AI *approves* on behalf of a human (ai_driven workflow mode).
+    # intent_verified = AI *assesses risk* before the human sees the request.
+    intent_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="True when the intent verifier ran and produced a result.",
+    )
+    intent_risk_tier: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Risk tier from the intent verifier: low/medium/high/critical.",
+    )
+    intent_step_up_override: Mapped[Optional[bool]] = mapped_column(
+        Boolean,
+        nullable=True,
+        comment=(
+            "True when the intent verifier forced step_up_required=True "
+            "independently of the workflow's step_up_protocol setting."
+        ),
+    )
+    intent_description_match_score: Mapped[Optional[float]] = mapped_column(
+        nullable=True,
+        comment=(
+            "How well the agent description matches actual tool_args (0.0–1.0). "
+            "Populated by LLM verifier (Phase 1); rule-based leaves this NULL."
+        ),
+    )
+    intent_flags: Mapped[Optional[list]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment='JSON array of FLAG_* strings, e.g. ["IRREVERSIBLE_OPERATION"].',
+    )
+    intent_reasoning: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Human-readable explanation from the LLM verifier (Phase 1).",
+    )
+    intent_model: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment='Classifier used, e.g. "rule_based" or "claude-3-5-haiku-20241022".',
+    )
+    intent_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp when the intent verifier completed.",
+    )
+    intent_latency_ms: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Wall-clock time of the intent verification call in milliseconds.",
+    )
+
+    # RDT (Role Delegation Token) fields - Phase A demo
+    rdt_envelope: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        default=None,
+        comment="RDT envelope containing action_class, operation, context, reasoning, timestamp, approver_id, credential info, and WebAuthn signature/authenticator_data (Phase A: JSON+SHA256; Phase C: CBOR+domain-separation)",
+    )
+    action_class: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="RDT action classification: read|write|delete|deploy|spend|admin|privacy (inferred by AI reviewer or explicitly set)",
+    )
+
     # Relationships
     account: Mapped["Account"] = relationship(
         "Account", back_populates="approval_requests"
@@ -210,6 +410,16 @@ class ApprovalRequest(Base):
         cascade="all, delete-orphan",
         order_by="ApprovalEvent.timestamp",
     )
+
+    @property
+    def step_up_protocol(self) -> Optional[str]:
+        """Return the step-up protocol from the linked approval workflow.
+
+        Lazy-loads via the SQLAlchemy relationship; safe in sync contexts.
+        """
+        if self.approval_workflow is not None:
+            return self.approval_workflow.step_up_protocol
+        return None
 
     def __repr__(self) -> str:
         """String representation."""

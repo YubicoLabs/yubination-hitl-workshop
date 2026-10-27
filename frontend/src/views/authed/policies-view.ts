@@ -176,6 +176,9 @@ export class PoliciesView extends LitElement {
   static styles = [
     unsafeCSS(consoleStyles),
     css`
+      [hidden] {
+        display: none !important;
+      }
       :host {
         display: block;
       }
@@ -1203,6 +1206,7 @@ export class PoliciesView extends LitElement {
                   : 'Approval Required'}
             </sl-badge>
             <sl-select
+              ?hidden=${this.configurationLocked}
               size="small"
               value=${rule.action}
               @sl-change=${(e: any) =>
@@ -1263,7 +1267,10 @@ export class PoliciesView extends LitElement {
 
   private renderApprovalPoliciesTab() {
     return html`
-      <div style="margin-bottom: var(--sl-spacing-large);">
+      <div
+        style="margin-bottom: var(--sl-spacing-large);"
+        ?hidden=${this.configurationLocked}
+      >
         <sl-button variant="primary" @click=${() => this.openPolicyDialog()}>
           <sl-icon slot="prefix" name="plus-lg"></sl-icon>
           Create Approval Workflow
@@ -1379,7 +1386,7 @@ export class PoliciesView extends LitElement {
                 `}
           </div>
         </div>
-        <div slot="footer">
+        <div slot="footer" ?hidden=${this.configurationLocked}>
           <sl-button
             size="small"
             variant="danger"
@@ -1408,6 +1415,7 @@ export class PoliciesView extends LitElement {
       <div class="policy-files-container">
         <div class="policy-files-actions">
           <sl-button
+            ?hidden=${this.configurationLocked}
             variant="primary"
             @click=${() =>
               this.shadowRoot
@@ -1426,6 +1434,7 @@ export class PoliciesView extends LitElement {
             Export YAML
           </sl-button>
           <input
+            ?disabled=${this.configurationLocked}
             type="file"
             id="policy-file-input"
             accept=".yaml,.yml,.json"
@@ -1531,6 +1540,7 @@ defaults:
               size="small"
               variant="primary"
               @click=${() => (this._showSaveVersionDialog = true)}
+              ?hidden=${this.configurationLocked}
             >
               <sl-icon slot="prefix" name="save"></sl-icon>
               Save Version
@@ -1538,6 +1548,7 @@ defaults:
             <sl-button
               size="small"
               @click=${() => (this._showPruneDialog = true)}
+              ?hidden=${this.configurationLocked}
               ?disabled=${this._versions.length === 0}
             >
               <sl-icon slot="prefix" name="trash"></sl-icon>
@@ -1623,6 +1634,7 @@ defaults:
           </div>
           <div
             class="version-actions"
+            ?hidden=${this.configurationLocked}
             @click=${(e: Event) => e.stopPropagation()}
           >
             <sl-tooltip content="View Diff">
@@ -2142,12 +2154,22 @@ defaults:
     `;
   }
 
+  private get configurationLocked() {
+    return this._features['workshop_configuration_locked'] === true;
+  }
+
   render() {
     return html`
       <view-header headerText="Governance" width="extra-wide"></view-header>
 
       <div class="column-layout extra-wide">
         <div class="main-column">
+          ${this.configurationLocked
+            ? html`<sl-alert open
+                >Workshop tools and approval policies are configured for this
+                exercise.</sl-alert
+              >`
+            : ''}
           ${this._error
             ? html`
                 <sl-alert variant="danger" open closable>

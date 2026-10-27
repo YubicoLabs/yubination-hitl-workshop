@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from .. import models
@@ -108,6 +109,47 @@ class CRUDApprovalWorkflow(CRUDBase[models.ApprovalWorkflow]):
             )
             .first()
         )
+
+    def is_user_authorized_approver(
+        self,
+        db: Session,
+        *,
+        workflow_id: UUID,
+        account_id: UUID,
+        user_id: UUID,
+    ) -> bool:
+        """Return whether a user is an approver for an account-scoped workflow.
+
+        Direct approvers and members of configured approver teams use the same
+        workflow fields that notification delivery and quorum handling already
+        consume.
+
+        Args:
+            db: Database session.
+            workflow_id: Approval Workflow to authorize against.
+            account_id: Account that owns the Approval Workflow.
+            user_id: Candidate approver.
+
+        Returns:
+            True for a configured direct or team approver; otherwise False.
+        """
+        workflow = self.get(db, id=workflow_id, account_id=str(account_id))
+        if workflow is None:
+            return False
+
+        if user_id in (workflow.approver_user_ids or []):
+            return True
+
+        from .team import crud_team
+
+        for team_id in workflow.approver_team_ids or []:
+            team = crud_team.get(db, id=team_id, account_id=str(account_id))
+            if team is not None and crud_team.get_membership(
+                db, team_id=team_id, user_id=user_id
+            ):
+                return True
+
+        return False
 
     def find_legacy_default_workflows(self, db: Session) -> List[UUID]:
         """Return ``account_id``s whose default workflow needs repair.
@@ -310,6 +352,19 @@ async def get_approval_workflow_async(
     return result.scalar_one_or_none()
 
 
+async def get_approval_workflow_for_account_async(
+    db: AsyncSession, *, workflow_id: UUID, account_id: UUID
+) -> Optional[models.ApprovalWorkflow]:
+    """Retrieve an approval workflow only within its owning account."""
+    result = await db.execute(
+        select(models.ApprovalWorkflow).where(
+            models.ApprovalWorkflow.id == workflow_id,
+            models.ApprovalWorkflow.account_id == account_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_default_approval_workflow_async(
     db: Session, account_id: UUID
 ) -> Optional[models.ApprovalWorkflow]:
@@ -329,3 +384,38 @@ async def get_default_approval_workflow_async(
         )
     )
     return result.scalars().first()
+
+
+async def is_user_authorized_approver_async(
+    db: AsyncSession,
+    *,
+    workflow_id: UUID,
+    account_id: UUID,
+    user_id: UUID,
+) -> bool:
+    """Return whether a user is a direct or team approver in an account."""
+    workflow_result = await db.execute(
+        select(models.ApprovalWorkflow).where(
+            models.ApprovalWorkflow.id == workflow_id,
+            models.ApprovalWorkflow.account_id == account_id,
+        )
+    )
+    workflow = workflow_result.scalar_one_or_none()
+    if workflow is None:
+        return False
+    if user_id in (workflow.approver_user_ids or []):
+        return True
+    if not workflow.approver_team_ids:
+        return False
+
+    membership_result = await db.execute(
+        select(models.TeamMembership.id)
+        .join(models.Team, models.Team.id == models.TeamMembership.team_id)
+        .where(
+            models.TeamMembership.user_id == user_id,
+            models.TeamMembership.team_id.in_(workflow.approver_team_ids),
+            models.Team.account_id == account_id,
+        )
+        .limit(1)
+    )
+    return membership_result.scalar_one_or_none() is not None

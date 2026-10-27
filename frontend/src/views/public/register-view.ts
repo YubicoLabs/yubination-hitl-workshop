@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Router } from '@vaadin/router';
-import { post, getFeatures } from '../../api';
+import { post, getFeatures, ApiError } from '../../api';
 import { formStyles } from '../../styles/form-styles';
 import { getBrandConfig } from '../../brand-config';
 
@@ -29,6 +29,12 @@ export class RegisterView extends LitElement {
 
   @state()
   private _billingEnabled = false;
+
+  @state()
+  private workshopCodeRequired = false;
+
+  @state() private settingsReady = false;
+  @state() private settingsFailed = false;
 
   static styles = [
     formStyles,
@@ -82,12 +88,18 @@ export class RegisterView extends LitElement {
   }
 
   private async _checkFeatures() {
+    this.settingsReady = false;
+    this.settingsFailed = false;
     try {
       const features = await getFeatures();
       const providers = features.features['oauth_providers'];
       this.oauthProviders = Array.isArray(providers) ? providers : [];
       this._billingEnabled = features.features['billing'] === true;
+      this.workshopCodeRequired =
+        features.features['workshop_signup_code_required'] === true;
+      this.settingsReady = true;
     } catch (error) {
+      this.settingsFailed = true;
       this.oauthProviders = [];
       this._billingEnabled = false;
     }
@@ -95,6 +107,7 @@ export class RegisterView extends LitElement {
 
   private async handleRegister(event: SubmitEvent) {
     event.preventDefault();
+    if (!this.settingsReady || this._loading) return;
     this._loading = true;
     const form = event.target as HTMLFormElement;
     const formData = new FormData(form);
@@ -107,6 +120,9 @@ export class RegisterView extends LitElement {
         username,
         email,
         password,
+        ...(this.workshopCodeRequired
+          ? { workshop_code: formData.get('workshop_code') }
+          : {}),
       });
 
       // If the backend returns an error in the payload instead of throwing an HTTP error
@@ -197,12 +213,17 @@ export class RegisterView extends LitElement {
       Router.go('/login?registered=true');
     } catch (error) {
       this._loading = false;
-      if (error instanceof Error) {
-        this.error = error.message;
-      } else {
-        this.error = 'Failed to create an account';
-      }
-      console.error('Create account failed', error);
+      const friendlyMessage =
+        error instanceof ApiError &&
+        error.status < 500 &&
+        !/[{}\[\]]/.test(error.message) &&
+        !error.message.startsWith('HTTP error!')
+          ? error.message
+          : '';
+      this.error =
+        friendlyMessage ||
+        'Unable to create your account. Please try again or ask a facilitator for help.';
+      // Registration failures may contain submitted secrets; do not log them.
       // Ensure we don't proceed with checkout if registration failed
       return;
     }
@@ -244,10 +265,27 @@ export class RegisterView extends LitElement {
           </a>
         </div>
         <div class="form-container">
-          <h2>Create a ${getBrandConfig().name} account</h2>
+          <h2>
+            ${getBrandConfig().workshop
+              ? 'Create a workshop account'
+              : `Create a ${getBrandConfig().name} account`}
+          </h2>
           ${this.error
-            ? html`<div class="error-message">${this.error}</div>`
+            ? html`<div class="error-message" role="alert">${this.error}</div>`
             : ''}
+          ${this.settingsFailed
+            ? html`<p role="alert">
+                  Signup settings could not load. Retry before creating your
+                  account.
+                </p>
+                <sl-button
+                  id="retry-signup-settings"
+                  @click=${this._checkFeatures}
+                  >Retry settings</sl-button
+                >`
+            : !this.settingsReady
+              ? html`<p role="status">Loading signup settings…</p>`
+              : nothing}
           ${this._renderOAuthButtons()}
           <form @submit=${this.handleRegister}>
             <div class="form-group">
@@ -278,10 +316,24 @@ export class RegisterView extends LitElement {
                 password-toggle
               ></sl-input>
             </div>
+            ${this.workshopCodeRequired
+              ? html`<div class="form-group">
+                  <sl-input
+                    id="workshop-code"
+                    name="workshop_code"
+                    label="Workshop code"
+                    help-text="Use the code your facilitator shared with you."
+                    autocomplete="off"
+                    maxlength="128"
+                    required
+                  ></sl-input>
+                </div>`
+              : nothing}
             <div class="form-actions">
               <sl-button
                 type="submit"
                 variant="primary"
+                ?disabled=${!this.settingsReady || this._loading}
                 ?loading=${this._loading}
                 >Create account</sl-button
               >

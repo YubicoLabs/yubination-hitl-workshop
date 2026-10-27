@@ -116,6 +116,38 @@ class CRUDFlowExecution(CRUDBase[FlowExecution]):
         db.flush()  # Use flush instead of commit to stay in transaction
         return db_obj
 
+    def update_monitor_result(
+        self,
+        db: Session,
+        *,
+        execution_id: uuid.UUID,
+        flow_id: uuid.UUID,
+        expected_status: str,
+        expected_reference: Optional[str],
+        status: str,
+        error_message: Optional[str],
+        end_time: Any,
+    ) -> bool:
+        """Apply a monitor result only if the observed execution is unchanged."""
+        changed = (
+            db.query(FlowExecution)
+            .filter(
+                FlowExecution.id == execution_id,
+                FlowExecution.flow_id == flow_id,
+                FlowExecution.status == expected_status,
+                FlowExecution.agent_session_reference == expected_reference,
+            )
+            .update(
+                {
+                    "status": status,
+                    "error_message": error_message,
+                    "end_time": end_time,
+                },
+                synchronize_session=False,
+            )
+        )
+        return changed == 1
+
     def update(
         self, db: Session, db_obj: FlowExecution, obj_in: FlowExecutionUpdate
     ) -> FlowExecution:

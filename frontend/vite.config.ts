@@ -3,6 +3,7 @@ import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 import cssInjectedByJsPlugin from 'vite-plugin-css-injected-by-js';
 import { brandPlugin } from './vite-plugin-brand';
+import { previewsignArtifactPlugin } from './vite-plugin-previewsign-artifact.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -34,6 +35,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    previewsignArtifactPlugin(),
     cssInjectedByJsPlugin({
       jsAssetsFilterFunction: (chunk) => {
         return /main/.test(chunk.fileName);
@@ -78,6 +80,11 @@ export default defineConfig({
       },
       '/admin': {
         target: adminProxyTarget,
+        changeOrigin: true,
+        ws: true,
+      },
+      '/approval': {
+        target: apiProxyTarget,
         changeOrigin: true,
         ws: true,
       },

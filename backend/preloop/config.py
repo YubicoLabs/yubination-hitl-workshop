@@ -2,10 +2,11 @@
 
 import logging
 import os
+import re
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,55 @@ class Settings(BaseSettings):
         True,
         description="Enable self-registration. Set to False to require admin invitation.",
     )
+    workshop_signup_code_required: bool = Field(
+        False,
+        description="Require a valid deployment-wide workshop code for registration.",
+    )
+    workshop_source_repository_url: str = ""
+
+    @field_validator("workshop_source_repository_url")
+    @classmethod
+    def validate_workshop_source_repository(cls, value: str) -> str:
+        if value == "":
+            return value
+        if not re.fullmatch(
+            r"https://github\.com/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", value
+        ):
+            raise ValueError(
+                "Workshop source must be an HTTPS GitHub repository URL without credentials, query or fragment"
+            )
+        if value.rsplit("/", 1)[-1] in {".", ".."}:
+            raise ValueError("Workshop source must name a repository")
+        return value
+
+    workshop_configuration_locked: bool = Field(
+        False,
+        description="Prevent public changes to workshop tools and approval policies.",
+    )
+    webauthn_login_enabled: bool = Field(
+        True,
+        description="Enable WebAuthn passwordless login / 2FA. Set WEBAUTHN_LOGIN_ENABLED=false to disable.",
+    )
+    webauthn_mfa_required: bool = Field(
+        False,
+        description=(
+            "Require WebAuthn step-up as a second factor after password login when the "
+            "user has registered passkeys. Defaults to false so password login works "
+            "standalone and passkey login remains an optional alternative. "
+            "Set WEBAUTHN_MFA_REQUIRED=true to enforce hardware MFA on every password login."
+        ),
+    )
+    webauthn_rp_id: str = Field(
+        "localhost",
+        description="WebAuthn Relying Party ID — must match the effective domain users access the app on. "
+        "Set to the bare domain (no scheme, no path), e.g. 'preloop-demo.yubico.com'. "
+        "Env var: WEBAUTHN_RP_ID",
+    )
+    webauthn_rp_name: str = Field(
+        "Preloop",
+        description="WebAuthn Relying Party display name shown in browser key-selection dialogs. "
+        "Env var: WEBAUTHN_RP_NAME",
+    )
 
     database: DatabaseSettings
     security: SecuritySettings
@@ -349,6 +399,18 @@ class Settings(BaseSettings):
             "t",
             "yes",
         )
+        workshop_signup_code_required = os.getenv(
+            "WORKSHOP_SIGNUP_CODE_REQUIRED", "false"
+        ).lower() in ("true", "1", "t", "yes")
+        webauthn_login_enabled = os.getenv(
+            "WEBAUTHN_LOGIN_ENABLED", "true"
+        ).lower() in ("true", "1", "t", "yes")
+        webauthn_mfa_required = os.getenv("WEBAUTHN_MFA_REQUIRED", "false").lower() in (
+            "true",
+            "1",
+            "t",
+            "yes",
+        )
 
         # GitHub App OAuth settings (SaaS only)
         github_app = GitHubAppSettings(
@@ -394,6 +456,16 @@ class Settings(BaseSettings):
             nats_url=os.getenv("NATS_URL", "nats://localhost:4222"),
             PROMPTS_FILE=prompts_file,
             registration_enabled=registration_enabled,
+            workshop_signup_code_required=workshop_signup_code_required,
+            workshop_source_repository_url=os.getenv(
+                "WORKSHOP_SOURCE_REPOSITORY_URL", ""
+            ),
+            workshop_configuration_locked=os.getenv(
+                "WORKSHOP_CONFIGURATION_LOCKED", "false"
+            ).lower()
+            in ("true", "1", "t", "yes"),
+            webauthn_login_enabled=webauthn_login_enabled,
+            webauthn_mfa_required=webauthn_mfa_required,
             database=database,
             security=security,
             server=server,

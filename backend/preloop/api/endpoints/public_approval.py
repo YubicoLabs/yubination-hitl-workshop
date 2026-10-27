@@ -35,6 +35,9 @@ class ApprovalRequestPublic(BaseModel):
     status: str
     requested_at: str
     expires_at: Optional[str]
+    step_up_required: bool = False
+    step_up_verified: bool = False
+    has_registered_key: bool = False
 
 
 @router.get("/{request_id}/data")
@@ -67,19 +70,25 @@ def get_approval_request_public(
             status_code=404, detail="Approval request not found or invalid token"
         )
 
-    # Return public data only (redact tool_args for display)
-    from preloop.utils.redaction import redact_dict
+    from preloop.models.crud.webauthn_credential import crud_webauthn_credential
+
+    has_registered_key = crud_webauthn_credential.account_has_credential(
+        db, account_id=approval_request.account_id
+    )
 
     return ApprovalRequestPublic(
         id=str(approval_request.id),
         tool_name=approval_request.tool_name,
-        tool_args=redact_dict(approval_request.tool_args or {}),
+        tool_args=approval_request.tool_args or {},
         agent_reasoning=approval_request.agent_reasoning,
         status=approval_request.status,
         requested_at=approval_request.requested_at.isoformat(),
         expires_at=approval_request.expires_at.isoformat()
         if approval_request.expires_at
         else None,
+        step_up_required=approval_request.step_up_required,
+        step_up_verified=approval_request.step_up_verified,
+        has_registered_key=has_registered_key,
     )
 
 
@@ -152,6 +161,11 @@ async def decide_approval_request_public(
             )
 
         # Return updated data
+        from preloop.models.crud.webauthn_credential import crud_webauthn_credential
+
+        has_registered_key = crud_webauthn_credential.account_has_credential(
+            db_sync, account_id=updated_request.account_id
+        )
         return ApprovalRequestPublic(
             id=str(updated_request.id),
             tool_name=updated_request.tool_name,
@@ -162,4 +176,7 @@ async def decide_approval_request_public(
             expires_at=updated_request.expires_at.isoformat()
             if updated_request.expires_at
             else None,
+            step_up_required=updated_request.step_up_required,
+            step_up_verified=updated_request.step_up_verified,
+            has_registered_key=has_registered_key,
         )

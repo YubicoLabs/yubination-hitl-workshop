@@ -1,4 +1,6 @@
 server {
+    # Docker embedded DNS for this local Compose export only.
+    resolver 127.0.0.11 valid=10s ipv6=off;
     listen 80;
     server_name localhost;
 
@@ -12,6 +14,11 @@ server {
     # Root directory for static files
     root /usr/share/nginx/html;
     index index.html;
+
+    # Static content must never fall through to the SPA document.
+    location ^~ /content/ {
+        try_files $uri =404;
+    }
 
     # API proxy configuration
     location /api/ {
@@ -156,6 +163,29 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /previewsign/ {
+        types { application/json json; application/gzip gz; application/zip zip; }
+        default_type application/octet-stream;
+        gzip off;
+        gzip_static off;
+        try_files $uri =404;
+    }
+
+    location ^~ /workshop/ {
+        types {
+            application/json json;
+            application/gzip gz;
+            application/zip zip;
+            image/png png;
+            image/svg+xml svg;
+            image/jpeg jpg jpeg;
+        }
+        default_type application/octet-stream;
+        gzip off;
+        gzip_static off;
+        try_files $uri =404;
     }
 
     # Static files with caching

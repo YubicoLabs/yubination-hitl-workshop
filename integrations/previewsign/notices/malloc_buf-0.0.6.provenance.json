@@ -1,0 +1,12 @@
+{
+  "package": "malloc_buf",
+  "version": "0.0.6",
+  "declared_license": "MIT",
+  "original_mit_manifest_commit": "a7811e5f4c6f9685dd57ad9bfe34e9bf6b0ba4f9",
+  "notice_revision": "d9a3e539642bd90e07df458d226b19cdfa606863",
+  "notice_source": "https://raw.githubusercontent.com/SSheldon/malloc_buf/d9a3e539642bd90e07df458d226b19cdfa606863/LICENSE",
+  "notice_file": "notices/malloc_buf-MIT.txt",
+  "notice_sha256": "aced7b57e474a63edb5a724954222bf7659c01ceef0e648a03af799582991db7",
+  "relationship": "later-upstream supplementation",
+  "limitations": "0.0.6 declares MIT but omitted a standalone notice. This later upstream notice is not claimed to have shipped with 0.0.6; supplementation is not legal approval or package qualification."
+}

@@ -5,9 +5,11 @@ from typing import Any, Dict, Optional, List, Union
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
+from sqlalchemy import inspect as inspect_orm
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from preloop.models.db.session import get_db_session
+from preloop.models.db.session import get_db_session, _safe_close_db_session
 from preloop.api.auth import get_current_active_user
 from preloop.schemas.issue_compliance import CompliancePromptMetadata
 from preloop.sync.trackers import create_tracker_client
@@ -439,8 +441,9 @@ def get_account_for_user(
     found across multiple endpoint files. It uses the CRUD layer instead
     of direct database queries.
 
-    Note: This is a convenience dependency. Prefer using the User.account
-    relationship when possible to avoid extra database queries.
+    Returns loaded account columns detached from the request session, releasing
+    its connection before FastAPI schedules the endpoint worker. Callers that
+    modify the account must add it to their session before committing.
 
     Args:
         current_user: Authenticated user from JWT token (User model)
@@ -452,10 +455,25 @@ def get_account_for_user(
     Raises:
         HTTPException: 401 if account not found for user
     """
-    account = crud_account.get(db, id=current_user.account_id)
-    if not account:
+    try:
+        account = crud_account.get(db, id=current_user.account_id)
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account not found",
+            )
+        state = inspect_orm(account, raiseerr=False)
+        if state is not None:
+            for attribute in state.mapper.column_attrs:
+                getattr(account, attribute.key)
+            db.expunge(account)
+        return account
+    except SQLAlchemyError as exc:
+        logger.error("Account database unavailable (%s)", type(exc).__name__)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account not found",
-        )
-    return account
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account service temporarily unavailable",
+            headers={"Retry-After": "1"},
+        ) from None
+    finally:
+        _safe_close_db_session(db)

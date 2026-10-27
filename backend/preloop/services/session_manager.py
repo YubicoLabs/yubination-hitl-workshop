@@ -248,7 +248,7 @@ class SessionManager:
         """
         return [s for s in self.sessions.values() if s.account_id == account_id]
 
-    def upgrade_session(
+    async def upgrade_session(
         self, session_id: str, user: "User", db: Session
     ) -> Optional[WebSocketSession]:
         """Upgrade an anonymous session to authenticated.
@@ -294,8 +294,21 @@ class SessionManager:
             },
         )
 
-        db.add(activity)
-        db.commit()
+        from starlette.concurrency import run_in_threadpool
+        from preloop.models.db.session import get_session_factory
+
+        def persist():
+            worker_db = get_session_factory()()
+            try:
+                worker_db.add(activity)
+                worker_db.commit()
+            except Exception:
+                worker_db.rollback()
+                raise
+            finally:
+                worker_db.close()
+
+        await run_in_threadpool(persist)
 
         logger.info(
             f"Upgraded session {session_id} to authenticated user {user.username}"

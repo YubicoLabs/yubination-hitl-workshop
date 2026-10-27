@@ -1,4 +1,5 @@
 import { css, html, nothing, unsafeCSS } from 'lit';
+import { getBrandConfig } from '../../brand-config';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
@@ -528,6 +529,15 @@ export class DashboardView extends AuthedElement {
         color: var(--sl-color-neutral-500);
         font-size: var(--sl-font-size-small);
         margin-top: -37px;
+      }
+
+      .updated-at.workshop {
+        margin-top: 0;
+      }
+
+      .workshop-entry {
+        margin: 0 0 var(--sl-spacing-x-small);
+        font-size: var(--sl-font-size-small);
       }
 
       .summary-grid,
@@ -3435,9 +3445,21 @@ export class DashboardView extends AuthedElement {
     `;
   }
 
+  private renderWorkshopEntry() {
+    return getBrandConfig().workshop
+      ? html`<p class="workshop-entry">
+          YubiNation Workshop ·
+          <a href="/console/workshop/yubination">Open workshop →</a>
+        </p>`
+      : nothing;
+  }
+
   render() {
     if (!this.isOnboarded && !this.welcomeCardDismissed) {
       return html`
+        ${getBrandConfig().workshop
+          ? html`<div class="extra-wide">${this.renderWorkshopEntry()}</div>`
+          : nothing}
         <div
           class="extra-wide"
           style="margin-top: var(--sl-spacing-large); display: flex; justify-content: center; align-items: center; min-height: 80vh;"
@@ -3460,7 +3482,8 @@ export class DashboardView extends AuthedElement {
         ${this.error
           ? html`<sl-alert variant="danger" open>${this.error}</sl-alert>`
           : nothing}
-        <div class="updated-at">
+        ${this.renderWorkshopEntry()}
+        <div class="updated-at ${getBrandConfig().workshop ? 'workshop' : ''}">
           Last updated ${this.formatRelativeTime(this.lastUpdatedAt)}
         </div>
         ${this.renderWelcomeCard()}

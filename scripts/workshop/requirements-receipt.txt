@@ -1,0 +1,6 @@
+# Offline receipt lab, tested with CPython 3.13.3. No hardware/PCSC extras.
+fido2==2.2.1
+cryptography==49.0.0
+jcs==0.2.1
+cffi==2.1.0
+pycparser==3.0

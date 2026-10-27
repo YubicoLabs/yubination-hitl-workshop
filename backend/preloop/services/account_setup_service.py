@@ -343,6 +343,12 @@ def complete_new_account_setup(
             f"Failed to create default approval workflow for account {account_id}: {e}"
         )
 
+    # Workshop provisioning failures propagate to the background-task error log.
+    # The sources remain inactive until policy creation completes.
+    from preloop.services.workshop_onboarding import setup_workshop_account
+
+    setup_workshop_account(account_id, user_id)
+
     # 4. Notify admins about new signup
     try:
         notify_admins_new_user_signup(

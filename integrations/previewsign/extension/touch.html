@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Security Key</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    padding: 16px;
+  }
+  .dialog {
+    width: 100%;
+    max-width: 360px;
+    text-align: center;
+  }
+  .icon {
+    margin-bottom: 12px;
+  }
+  .icon svg {
+    width: 56px;
+    height: 56px;
+  }
+  h1 { font-size: 16px; font-weight: 600; color: #1a1a1a; margin-bottom: 6px; }
+  .message { font-size: 13px; color: #555; margin-bottom: 16px; }
+  .cancel-btn {
+    background: none;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 6px 24px;
+    font-size: 13px;
+    color: #333;
+    cursor: pointer;
+  }
+  .cancel-btn:hover { background: #f0f0f0; }
+</style>
+</head>
+<body>
+<div class="dialog">
+  <div class="icon" id="icon">
+    <svg viewBox="0 0 48 48" fill="none" stroke="#0066cc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="15" y="2" width="18" height="36" rx="3"/>
+      <rect x="20" y="5" width="3" height="7" rx="0.5" fill="#0066cc" opacity="0.3" stroke="none"/>
+      <rect x="25" y="5" width="3" height="7" rx="0.5" fill="#0066cc" opacity="0.3" stroke="none"/>
+      <line x1="15" y1="14" x2="33" y2="14"/>
+      <circle cx="24" cy="27" r="5" fill="#0066cc" opacity="0.1"/>
+      <circle cx="24" cy="27" r="9" stroke-width="1.5" opacity="0.35"/>
+      <circle cx="24" cy="27" r="13" stroke-width="1" opacity="0.15"/>
+    </svg>
+  </div>
+  <h1 id="title">Touch Your Security Key</h1>
+  <div class="message" id="message">Tap the button on your security key to continue.</div>
+  <button class="cancel-btn" id="cancelBtn">Cancel</button>
+</div>
+<script src="touch.js"></script>
+</body>
+</html>

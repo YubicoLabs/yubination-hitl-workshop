@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { router } from '../router';
+import { getBrandConfig } from '../brand-config';
 import { Router } from '@vaadin/router';
 import { activityTracker } from '../services/activity-tracker';
 import { getFeatures } from '../api';
@@ -51,6 +52,8 @@ import '../views/authed/flow-execution-view';
 import '../views/authed/runtime-sessions-view';
 import '../views/authed/approval-view';
 import '../views/authed/approvals-view';
+import '../views/authed/yubination-workshop-view';
+import { workshopLabRoutes } from '../views/authed/workshop-lab-routes';
 import '../views/authed/policies-view';
 import '../views/authed/audit-view';
 import '../views/authed/agents-view';
@@ -269,6 +272,8 @@ export class LitApp extends LitElement {
       {
         path: '/ai-act-readiness',
         action: (context, commands) => {
+          if (getBrandConfig().workshop) return commands.redirect('/');
+
           // Check if we have SSR content for this EXACT route on first load
           const outlet = this.renderRoot.querySelector('main');
           const existingWrapper = outlet?.querySelector('static-view-wrapper');
@@ -352,7 +357,7 @@ export class LitApp extends LitElement {
       {
         path: '/console',
         component: 'console-shell',
-        action: () => {
+        action: (context, commands) => {
           // Handle OAuth callback tokens from URL fragment only.
           // Fragment-based delivery prevents tokens from appearing in browser
           // history, server access logs, and Referrer headers.
@@ -363,6 +368,25 @@ export class LitApp extends LitElement {
           );
           const accessToken = params.get('access_token');
           const refreshToken = params.get('refresh_token');
+
+          if (
+            (context.pathname === '/console/authorize' ||
+              context.pathname === '/console/authorize/') &&
+            !accessToken &&
+            !localStorage.getItem('accessToken')
+          ) {
+            try {
+              localStorage.setItem(
+                'loginRedirect',
+                context.pathname + context.search + context.hash
+              );
+            } catch {}
+            return commands.redirect(
+              new URLSearchParams(context.search).get('signup') === '1'
+                ? '/register'
+                : '/login'
+            );
+          }
 
           if (accessToken) {
             localStorage.setItem('accessToken', accessToken);
@@ -519,6 +543,14 @@ export class LitApp extends LitElement {
           { path: 'pricing', component: 'pricing-view' },
           { path: 'approvals', component: 'approvals-view' },
           { path: 'approval/:requestId', component: 'approval-view' },
+          {
+            path: 'workshop/yubination',
+            component: 'yubination-workshop-view',
+          },
+          ...workshopLabRoutes.map((route) => ({
+            ...route,
+            path: route.path.replace('/console/', ''),
+          })),
           { path: 'authorize', component: 'oauth-consent-view' },
           {
             path: 'governance',

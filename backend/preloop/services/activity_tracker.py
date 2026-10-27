@@ -99,50 +99,56 @@ async def handle_activity(data: dict, session: WebSocketSession, db: Session) ->
         for field in ["event", "timestamp", "metadata"]:
             activity.event_data.pop(field, None)
 
-    # Persist to database
-    try:
-        db.add(activity)
-        db.commit()
+    # A worker owns the entire DB unit; no request Session crosses threads.
+    from starlette.concurrency import run_in_threadpool
+    from preloop.models.db.session import get_session_factory
 
-        logger.debug(
-            f"Tracked {event_type} activity for session {session.id} "
-            f"({'user ' + str(session.user_id) if session.user_id else 'anonymous'})"
-        )
-
-        # Broadcast activity to admin WebSocket connections
-        # Import here to avoid circular dependency
-        import json
-        from preloop.sync.services.event_bus import event_bus_service
-
-        activity_message = {
-            "type": "activity_update",
-            "account_id": str(activity.account_id) if activity.account_id else None,
-            "activity": {
-                "id": str(activity.id),
-                "session_id": str(activity.session_id) if activity.session_id else None,
-                "user_id": str(activity.user_id) if activity.user_id else None,
+    def persist():
+        worker_db = get_session_factory()()
+        try:
+            worker_db.add(activity)
+            worker_db.commit()
+            return {
+                "type": "activity_update",
                 "account_id": str(activity.account_id) if activity.account_id else None,
-                "event_type": activity.event_type,
-                "timestamp": activity.timestamp.isoformat(),
-                "path": activity.path,
-                "action": activity.action,
-                "event_data": activity.event_data,
-            },
-        }
+                "activity": {
+                    "id": str(activity.id),
+                    "session_id": str(activity.session_id)
+                    if activity.session_id
+                    else None,
+                    "user_id": str(activity.user_id) if activity.user_id else None,
+                    "account_id": str(activity.account_id)
+                    if activity.account_id
+                    else None,
+                    "event_type": activity.event_type,
+                    "timestamp": activity.timestamp.isoformat(),
+                    "path": activity.path,
+                    "action": activity.action,
+                    "event_data": activity.event_data,
+                },
+            }
+        except Exception:
+            worker_db.rollback()
+            raise
+        finally:
+            worker_db.close()
 
-        # Publish to NATS if connected
-        if event_bus_service.nc and event_bus_service.nc.is_connected:
-            try:
-                await event_bus_service.nc.publish(
-                    "admin.activity", json.dumps(activity_message).encode()
-                )
-                logger.debug(f"Published activity event to NATS: {event_type}")
-            except Exception as nats_error:
-                logger.error(f"Failed to publish to NATS: {nats_error}")
+    try:
+        activity_message = await run_in_threadpool(persist)
+    except Exception as exc:
+        logger.error("Failed to persist activity: %s", exc, exc_info=True)
+        return
 
-    except Exception as e:
-        logger.error(f"Failed to persist activity: {e}", exc_info=True)
-        db.rollback()
+    import json
+    from preloop.sync.services.event_bus import event_bus_service
+
+    if event_bus_service.nc and event_bus_service.nc.is_connected:
+        try:
+            await event_bus_service.nc.publish(
+                "admin.activity", json.dumps(activity_message).encode()
+            )
+        except Exception as exc:
+            logger.error("Failed to publish to NATS: %s", exc)
 
 
 async def track_system_event(

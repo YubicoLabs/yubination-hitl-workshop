@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { changePassword } from '../../../api';
 import '@shoelace-style/shoelace/dist/components/input/input.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
+import '../../../components/security-keys-manager.js';
 import consoleStyles from '../../../styles/console-styles.css?inline';
 
 @customElement('security-view')
@@ -53,10 +54,9 @@ export class SecurityView extends LitElement {
       <view-header headerText="Security" width="narrow"> </view-header>
       <div class="column-layout narrow">
         <div class="main-column">
-          <div class="card">
-            <div class="card-header">
-              <h3>Change Password</h3>
-            </div>
+          <security-keys-manager></security-keys-manager>
+          <details class="card password-settings">
+            <summary>Change password</summary>
             <div class="card-body">
               <form @submit="${this.handleChangePassword}">
                 <sl-input
@@ -99,7 +99,7 @@ export class SecurityView extends LitElement {
                   : ''}
               </form>
             </div>
-          </div>
+          </details>
         </div>
         <div class="side-column"></div>
       </div>
@@ -123,8 +123,34 @@ export class SecurityView extends LitElement {
         gap: 1rem;
       }
 
+      .main-column {
+        min-width: 0;
+      }
+      security-keys-manager {
+        display: block;
+        margin-bottom: 0;
+      }
+      .password-settings summary {
+        padding: 1rem;
+        cursor: pointer;
+        font-weight: 600;
+        min-height: 44px;
+        box-sizing: border-box;
+      }
+      .password-settings summary:focus-visible {
+        outline: 3px solid var(--sl-color-primary-500);
+      }
+      .password-settings .card-body {
+        max-width: 32rem;
+      }
       sl-button {
-        width: 12em;
+        align-self: flex-start;
+      }
+      @media (max-width: 600px) {
+        .column-layout {
+          padding-left: 0.75rem;
+          padding-right: 0.75rem;
+        }
       }
     `,
   ];

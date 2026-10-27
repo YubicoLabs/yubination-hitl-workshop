@@ -1,5 +1,6 @@
 """CRUD operations for ApprovalRequest model."""
 
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 from sqlalchemy.orm import Session, selectinload
@@ -98,6 +99,78 @@ class CRUDApprovalRequest(CRUDBase[ApprovalRequest]):
             .limit(limit)
             .all()
         )
+
+    def get_audit_decisions(
+        self,
+        db: Session,
+        *,
+        account_id: str,
+        statuses: list[str] | None = None,
+        step_up_verified: bool | None = None,
+        tool_name: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[ApprovalRequest], int]:
+        """Return resolved approval records for forensic audit, with total count."""
+        resolved = statuses if statuses is not None else ["approved", "declined"]
+        query = (
+            db.query(self.model)
+            .filter(self.model.account_id == account_id)
+            .filter(self.model.status.in_(resolved))
+        )
+        if step_up_verified is not None:
+            query = query.filter(self.model.step_up_verified == step_up_verified)
+        if tool_name is not None:
+            query = query.filter(self.model.tool_name == tool_name)
+        if since is not None:
+            query = query.filter(self.model.resolved_at >= since)
+        if until is not None:
+            query = query.filter(self.model.resolved_at <= until)
+
+        total: int = query.count()
+        items = (
+            query.order_by(self.model.resolved_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        return items, total
+
+    def update_step_up_fields(
+        self,
+        db: Session,
+        *,
+        approval_request: ApprovalRequest,
+        fields: dict,
+    ) -> None:
+        """Apply step-up ceremony result fields to an approval request.
+
+        Args:
+            db: Database session.
+            approval_request: The already-loaded ApprovalRequest to update.
+            fields: Dict of column name → value to set.
+        """
+        for key, value in fields.items():
+            setattr(approval_request, key, value)
+        db.flush()
+
+    def set_arkg_step_up_verified(
+        self,
+        db: Session,
+        *,
+        approval_request: ApprovalRequest,
+        signature_bytes: bytes,
+    ) -> ApprovalRequest:
+        """Record a verified ARKG previewSign step-up on an approval request."""
+        approval_request.arkg_step_up_signature = signature_bytes
+        approval_request.arkg_step_up_verified = True
+        approval_request.step_up_verified = True
+        db.add(approval_request)
+        db.commit()
+        db.refresh(approval_request)
+        return approval_request
 
 
 # Create instance

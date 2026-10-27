@@ -22,6 +22,31 @@ export class IdeSetupTabs extends LitElement {
       }
     `,
     ideSetupStyles,
+    css`
+      .ide-logo-container {
+        background: transparent;
+        border: 0;
+        width: 100%;
+        cursor: pointer;
+        flex-direction: column;
+        gap: 0.4rem;
+        font: inherit;
+        color: inherit;
+        min-width: 7.5rem;
+      }
+      .client-label {
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+      .ide-logo-container img {
+        max-height: 2rem;
+        object-fit: contain;
+      }
+      .ide-logo-container:focus-visible {
+        outline: 3px solid var(--sl-color-primary-600, #1668cc);
+        outline-offset: -3px;
+      }
+    `,
   ];
 
   @property({ type: Array })
@@ -55,6 +80,34 @@ export class IdeSetupTabs extends LitElement {
 
   private _handleTabClick(ide: string) {
     this._activeTab = ide;
+  }
+
+  private async _handleTabKey(e: KeyboardEvent, index: number) {
+    let next: number;
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        next = (index + 1) % this.configs.length;
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        next = (index + this.configs.length - 1) % this.configs.length;
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = this.configs.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    this._activeTab = this.configs[next].ide;
+    await this.updateComplete;
+    this.renderRoot
+      .querySelectorAll<HTMLElement>('[role="tab"]')
+      [next]?.focus();
   }
 
   private _copyCode(e: Event) {
@@ -107,35 +160,41 @@ export class IdeSetupTabs extends LitElement {
             `
           : ''}
         <div class="tabs-wrapper">
-          <div class="ide-tabs" role="tablist">
+          <div class="ide-tabs" role="tablist" aria-label="Choose your client">
             ${this.configs.map(
-              (config) => html`
-                <div
+              (config, index) => html`
+                <button
+                  type="button"
+                  id=${`client-tab-${config.ide}`}
+                  aria-controls="client-setup-panel"
                   class="ide-logo-container ${this._activeTab === config.ide
                     ? 'active'
                     : ''}"
                   role="tab"
-                  tabindex="0"
+                  tabindex=${this._activeTab === config.ide ? 0 : -1}
                   aria-selected="${this._activeTab === config.ide}"
                   @click=${() => this._handleTabClick(config.ide)}
-                  @keydown=${(e: KeyboardEvent) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      this._handleTabClick(config.ide);
-                    }
-                  }}
+                  @keydown=${(e: KeyboardEvent) => this._handleTabKey(e, index)}
                 >
                   <img
                     src="${config.logo_path}"
-                    alt="${config.ide_name}"
+                    alt=""
+                    aria-hidden="true"
                     width="${config.logo_width}"
                   />
-                </div>
+                  <span class="client-label">${config.ide_name}</span>
+                </button>
               `
             )}
           </div>
 
-          <div class="tab-content" role="tabpanel">
+          <div
+            class="tab-content"
+            role="tabpanel"
+            id="client-setup-panel"
+            aria-labelledby=${`client-tab-${this._activeTab}`}
+            tabindex="0"
+          >
             ${activeConfig
               ? html`
                   <div>

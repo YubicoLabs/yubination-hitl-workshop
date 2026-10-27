@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from preloop.api.auth import get_current_active_user
+from preloop.api.workshop import require_configuration_unlocked
 from preloop.services.mcp_tool_discovery import (
     get_cached_tools_for_server,
     scan_mcp_server_tools,
@@ -41,7 +42,126 @@ oauth_callback_router = APIRouter(tags=["MCP Servers OAuth"])
 _pending_oauth_states: dict[str, dict] = {}
 
 
-@router.post("/mcp-servers", status_code=status.HTTP_201_CREATED)
+@router.get("/workshop/attempts/{request_id}")
+def workshop_attempt_status(
+    request_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db_session),
+) -> dict:
+    """Read-only completion reconciliation, never tool execution or signature proof."""
+    from preloop.models.crud import workshop_customer
+    from preloop.services import workshop_fixture
+
+    account_id = current_user.account_id
+    summary = {
+        "approval_id": str(request_id),
+        "account_id": str(account_id),
+        "state": "unknown",
+    }
+    attempt = workshop_fixture.approved_attempt(
+        db, account_id=account_id, request_id=request_id
+    )
+    if attempt is None:
+        return summary
+    req, _ = attempt
+    if req.status == "pending":
+        return {**summary, "state": "pending"}
+    if req.status != "approved" or not workshop_customer.has_completion(
+        db, account_id=account_id, approval_request_id=request_id
+    ):
+        return summary
+    fixture = workshop_customer.get(db, account_id=account_id)
+    if fixture != {"email": req.tool_args["email"], "status": req.tool_args["status"]}:
+        return summary
+    return {
+        **summary,
+        "state": "completed",
+        "operation": req.tool_args,
+        "fixture": fixture,
+    }
+
+
+@router.get("/workshop/status")
+def workshop_setup_status(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db_session),
+) -> dict:
+    """Participant-visible configuration status; never a hardware/UAT success claim."""
+    from preloop.services.workshop_onboarding import TOOLS, managed_tool_name
+    from preloop.services import workshop_fixture
+    from preloop.models.crud import workshop_customer
+
+    if os.getenv("WORKSHOP_ONBOARDING_ENABLED", "").lower() != "true":
+        return {
+            "state": "disabled",
+            "message": "Automatic workshop setup is not enabled on this deployment.",
+        }
+    base = {"contract_version": workshop_fixture.VERSION}
+    sources = crud_mcp_server.get_multi_by_account(
+        db, account_id=str(current_user.account_id)
+    )
+    managed = {}
+    try:
+        for source in sources:
+            tool = managed_tool_name(source)
+            if tool:
+                if not workshop_fixture.is_source(source):
+                    return {
+                        "state": "review",
+                        "message": "Legacy workshop setup needs explicit migration review; existing data is preserved.",
+                    }
+                if (
+                    str(source.account_id) != str(current_user.account_id)
+                    or tool in managed
+                ):
+                    raise ValueError("Invalid workshop source ownership or duplicate")
+                managed[tool] = source
+    except ValueError:
+        return {
+            **base,
+            "state": "error",
+            "message": "Workshop configuration needs facilitator review.",
+        }
+    if not managed and any(
+        source.name in {item[0] for item in TOOLS.values()} for source in sources
+    ):
+        return {
+            "state": "review",
+            "message": "This account has manually configured workshop tools. Ask the facilitator to review migration.",
+        }
+    if any(source.status == "error" for source in managed.values()):
+        return {
+            **base,
+            "state": "error",
+            "message": "Workshop setup failed. Ask the facilitator to review and retry setup; do not bypass Preloop.",
+        }
+    if set(managed) == set(workshop_fixture.TOOLS) and all(
+        source.status == "active" for source in managed.values()
+    ):
+        fixture = workshop_customer.get(db, account_id=current_user.account_id)
+        if fixture:
+            return {
+                **base,
+                "state": "ready",
+                "message": "Your account's customer and governed tools are ready. Approval and execution still require validation.",
+                "fixture": fixture,
+                "tools": {
+                    "read": "get_customer_status",
+                    "write": "set_customer_status",
+                },
+            }
+    return {
+        **base,
+        "state": "pending",
+        "message": "Workshop tools and customer are being prepared. Refresh status shortly; if this persists, contact the facilitator.",
+    }
+
+
+@router.post(
+    "/mcp-servers",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 @require_permission("create_mcp_servers")
 async def create_mcp_server(
     server_data: MCPServerCreate,
@@ -236,7 +356,11 @@ async def get_mcp_server(
     return MCPServerResponse.model_validate(server)
 
 
-@router.put("/mcp-servers/{server_id}", response_model=MCPServerResponse)
+@router.put(
+    "/mcp-servers/{server_id}",
+    response_model=MCPServerResponse,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 @require_permission("edit_mcp_servers")
 async def update_mcp_server(
     server_id: UUID,
@@ -314,7 +438,11 @@ async def update_mcp_server(
         )
 
 
-@router.delete("/mcp-servers/{server_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/mcp-servers/{server_id}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 @require_permission("delete_mcp_servers")
 async def delete_mcp_server(
     server_id: UUID,
@@ -389,7 +517,11 @@ async def delete_mcp_server(
         )
 
 
-@router.post("/mcp-servers/{server_id}/scan", status_code=status.HTTP_200_OK)
+@router.post(
+    "/mcp-servers/{server_id}/scan",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 @require_permission("manage_mcp_servers")
 async def scan_mcp_server(
     server_id: UUID,
@@ -507,7 +639,10 @@ async def list_mcp_server_tools(
 # ---------------------------------------------------------------------------
 
 
-@oauth_callback_router.get("/api/v1/mcp-servers/{server_id}/oauth/authorize")
+@oauth_callback_router.get(
+    "/api/v1/mcp-servers/{server_id}/oauth/authorize",
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 async def mcp_server_oauth_authorize(
     server_id: str,
     token: str = Query(..., description="JWT access token for authentication"),
@@ -685,7 +820,10 @@ async def mcp_server_oauth_authorize(
     return RedirectResponse(url=auth_url, status_code=302)
 
 
-@oauth_callback_router.get("/api/v1/mcp-servers/oauth/callback")
+@oauth_callback_router.get(
+    "/api/v1/mcp-servers/oauth/callback",
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 async def mcp_server_oauth_callback(
     code: str = Query(...),
     state: str = Query(...),

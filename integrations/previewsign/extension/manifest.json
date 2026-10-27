@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "previewSign FIDO Bridge",
+  "version": "1.0.0",
+  "description": "Bridges previewSign WebAuthn extension to a native FIDO service, bypassing OS-level extension filtering.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArhp3mJfKxkJEqAmMDsGDwe6Mhx7IEAqXYadcqvZJPe5gZHHtOozmFkbxVYuGQAR2FKcGSZh7uxNyAyFGBqTrhFXqEAi3o95MaKf6OuaB0mn0HHQKfajb5jhbo1fjFi7gEv+NOOcDhFx/cxUaJ7ll/NLOi7H7FSlG+pPMz5z+pKRi9P9vH4Dy5P/QjQ4/B+a72BlFPqPLkZD7NWX1Vb6PoSf7n6Q7x2r5+T8AwaVe5ETy4GWJXQH0e4fJ7W6fjp2pqCZUP+muvl0je4kLS6Zl/QODfGGxpj0PzrRVyP2Xq/O3oHGvZ3mU4/ts1j4LpS6Z+P7Mz6YaKQ0vNsslQwIDAQAB",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sign-extension@example.com",
+      "strict_min_version": "121.0"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sign Extension Settings"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page.js", "pin.html", "pin-setup.html", "pin-setup.js", "pin-change.html", "pin-change.js", "touch.html", "select.html", "select.js"],
+      "matches": ["https://*/*", "http://localhost/*"]
+    }
+  ]
+}

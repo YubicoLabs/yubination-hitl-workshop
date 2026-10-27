@@ -3,16 +3,36 @@
 import asyncio
 import logging
 import os
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
-
-from sqlalchemy.orm import Session
 
 from preloop.agents import create_agent_executor, AgentStatus
 from preloop.models.db.session import get_db_session as get_db
-from preloop.models.models.flow_execution import FlowExecution
 from preloop.models.crud import crud_flow, crud_flow_execution
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExecutionSnapshot:
+    """Plain values crossing the database-worker/event-loop boundary."""
+
+    id: UUID
+    flow_id: UUID
+    status: str
+    start_time: datetime
+    agent_session_reference: str | None
+    error_message: str | None
+    end_time: datetime | None
+
+
+@dataclass(frozen=True)
+class FlowSnapshot:
+    agent_type: str
+    agent_config: dict[str, Any]
 
 
 class ExecutionMonitor:
@@ -82,40 +102,92 @@ class ExecutionMonitor:
             except asyncio.CancelledError:
                 break
 
-    async def _check_stale_executions(self):
-        """Check for stale executions and update their status."""
-        db: Session = next(get_db())
+    def _load_candidates(self) -> list[tuple[ExecutionSnapshot, FlowSnapshot | None]]:
+        """Own and close the entire read transaction in one worker thread."""
+        sessions = get_db()
+        db = next(sessions)
         try:
-            # Find executions that are in active states using CRUD layer
-            active_statuses = ["RUNNING", "PENDING", "INITIALIZING", "STARTING"]
-            stale_executions = crud_flow_execution.get_by_statuses(
-                db, statuses=active_statuses
+            executions = crud_flow_execution.get_by_statuses(
+                db, statuses=["RUNNING", "PENDING", "INITIALIZING", "STARTING"]
             )
-
-            if not stale_executions:
-                return
-
-            logger.debug(f"Found {len(stale_executions)} active executions to check")
-
-            for execution in stale_executions:
-                await self._check_execution(db, execution)
-
-            db.commit()
-
-        except Exception as e:
-            logger.error(f"Error checking stale executions: {e}", exc_info=True)
-            db.rollback()
+            candidates = []
+            now = datetime.now(timezone.utc)
+            for execution in executions:
+                if (
+                    now - execution.start_time.replace(tzinfo=timezone.utc)
+                    < self.stale_threshold
+                ):
+                    continue
+                snapshot = ExecutionSnapshot(
+                    id=execution.id,
+                    flow_id=execution.flow_id,
+                    status=execution.status,
+                    start_time=execution.start_time,
+                    agent_session_reference=execution.agent_session_reference,
+                    error_message=execution.error_message,
+                    end_time=execution.end_time,
+                )
+                flow = (
+                    crud_flow.get(db, id=execution.flow_id)
+                    if execution.agent_session_reference
+                    else None
+                )
+                flow_snapshot = (
+                    FlowSnapshot(flow.agent_type, deepcopy(flow.agent_config or {}))
+                    if flow
+                    else None
+                )
+                candidates.append((snapshot, flow_snapshot))
+            return candidates
         finally:
             db.close()
+            if hasattr(sessions, "close"):
+                sessions.close()
 
-    async def _check_execution(self, db: Session, execution: FlowExecution):
-        """
-        Check a single execution and update status if stale.
+    def _persist_result(
+        self, execution: ExecutionSnapshot, expected_status: str
+    ) -> None:
+        """Recheck the observed status/reference atomically before writing."""
+        sessions = get_db()
+        db = next(sessions)
+        try:
+            crud_flow_execution.update_monitor_result(
+                db,
+                execution_id=execution.id,
+                flow_id=execution.flow_id,
+                expected_status=expected_status,
+                expected_reference=execution.agent_session_reference,
+                status=execution.status,
+                error_message=execution.error_message,
+                end_time=execution.end_time,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+            if hasattr(sessions, "close"):
+                sessions.close()
 
-        Args:
-            db: Database session
-            execution: Flow execution to check
-        """
+    async def _check_stale_executions(self):
+        """Read snapshots, await agent I/O, then persist guarded updates."""
+        try:
+            candidates = await asyncio.to_thread(self._load_candidates)
+            for execution, flow in candidates:
+                expected_status = execution.status
+                await self._check_execution(flow, execution)
+                if execution.status != expected_status:
+                    await asyncio.to_thread(
+                        self._persist_result, execution, expected_status
+                    )
+        except Exception as e:
+            logger.error(f"Error checking stale executions: {e}", exc_info=True)
+
+    async def _check_execution(
+        self, flow: FlowSnapshot | None, execution: ExecutionSnapshot
+    ):
+        """Inspect agent state on the owning event loop without a DB session."""
         try:
             # Calculate how long the execution has been in current state
             now = datetime.now(timezone.utc)
@@ -138,8 +210,6 @@ class ExecutionMonitor:
                 execution.end_time = now
                 return
 
-            # Get the flow to determine agent type using CRUD layer
-            flow = crud_flow.get(db, id=execution.flow_id)
             if not flow:
                 logger.error(
                     f"Flow {execution.flow_id} not found for execution {execution.id}"

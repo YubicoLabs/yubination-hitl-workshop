@@ -311,6 +311,14 @@ class AIApprovalService:
         if not provider:
             provider = self._detect_provider(model)
 
+        # LiteLLM-prefixed models (vertex_ai/, bedrock/, azure/, etc.) always go via litellm
+        if (
+            "/" in model
+            and not model.startswith("gpt-")
+            and not model.startswith("claude-")
+        ):
+            return await self._call_litellm(prompt, model, api_key)
+
         if provider == "anthropic":
             return await self._call_anthropic(prompt, model, api_key)
         elif provider == "google":
@@ -425,6 +433,48 @@ class AIApprovalService:
         if response.content and len(response.content) > 0:
             return response.content[0].text
         return ""
+
+    async def _call_litellm(
+        self,
+        prompt: str,
+        model: str,
+        api_key: Optional[str] = None,
+    ) -> str:
+        """Call any model via LiteLLM (supports vertex_ai/, bedrock/, azure/, etc.).
+
+        Uses Application Default Credentials for Vertex AI when no api_key is set.
+        """
+        try:
+            import litellm
+        except ImportError as e:
+            raise ImportError(
+                "LiteLLM is required for vertex_ai/, bedrock/, and azure/ models. "
+                "Install it with: pip install litellm"
+            ) from e
+
+        kwargs: dict = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an AI approval system. Respond only with valid JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 1.0,
+            "max_tokens": 1024,
+            "response_format": {"type": "json_object"},
+        }
+        if api_key:
+            kwargs["api_key"] = api_key
+
+        response = await litellm.acompletion(**kwargs)
+        choice = response.choices[0]
+        content = choice.message.content or ""
+        logger.debug(
+            f"_call_litellm finish_reason={choice.finish_reason} len={len(content)}"
+        )
+        return content
 
     async def _call_google(
         self,

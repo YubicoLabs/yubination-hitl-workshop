@@ -20,6 +20,27 @@ export class LogoComponent extends LitElement {
       height: 35px;
     }
 
+    .workshop-logo {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 5px;
+      height: 45px;
+    }
+
+    .workshop-logo img {
+      height: 30px;
+      min-height: 0;
+      object-fit: contain;
+    }
+
+    .workshop-caption {
+      font-size: 10px;
+      line-height: 10px;
+      white-space: nowrap;
+      color: inherit;
+    }
+
     img {
       height: 100%;
     }
@@ -27,6 +48,7 @@ export class LogoComponent extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    if (getBrandConfig().workshop) this.style.minHeight = '45px';
     if (this.themeOverride) {
       this.setTheme(this.themeOverride);
     } else {
@@ -72,6 +94,11 @@ export class LogoComponent extends LitElement {
       this.theme === 'dark'
         ? brandConfig.branding.logo_dark
         : brandConfig.branding.logo_light;
-    return html`<img src="${logoSrc}" alt=${this.alt} />`;
+    return brandConfig.workshop
+      ? html`<span class="workshop-logo">
+          <img src=${logoSrc} alt=${this.alt} />
+          <span class="workshop-caption">YubiNation Workshop</span>
+        </span>`
+      : html`<img src="${logoSrc}" alt=${this.alt} />`;
   }
 }

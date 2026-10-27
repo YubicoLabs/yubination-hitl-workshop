@@ -87,6 +87,12 @@ export function formatRelativeTime(dateTimeString: string): string {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
+  if (diffMs < 0) {
+    const futureSeconds = Math.ceil(-diffMs / 1000);
+    return futureSeconds < 60
+      ? `in ${futureSeconds}s`
+      : `in ${Math.ceil(futureSeconds / 60)}m`;
+  }
   if (diffMins < 1) return 'just now';
   if (diffMins < 60) return `${diffMins}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;

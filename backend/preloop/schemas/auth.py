@@ -50,6 +50,7 @@ class AuthUserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
     full_name: Optional[str] = None
+    workshop_code: Optional[str] = None
 
     @field_validator("username")
     @classmethod
@@ -71,6 +72,8 @@ class AuthUserResponse(BaseModel):
     """Response model for user data."""
 
     model_config = {"title": "AuthUserResponse"}
+
+    id: Optional[UUID] = None
 
     username: str
     email: EmailStr

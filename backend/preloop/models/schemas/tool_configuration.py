@@ -171,6 +171,21 @@ class ApprovalWorkflowBase(BaseModel):
     escalation_workflow_id: Optional[UUID] = Field(
         None, description="workflow to escalate to when fallback_behavior='escalate'"
     )
+    # Intent verifier configuration (Phase 1)
+    intent_verification_enabled: Optional[bool] = Field(
+        False, description="Enable LLM-based intent verification for this workflow"
+    )
+    intent_verification_model: Optional[str] = Field(
+        None,
+        description="LLM model for intent verification, e.g. 'claude-3-5-haiku-20241022'",
+    )
+    intent_risk_threshold: Optional[str] = Field(
+        "high",
+        description="Minimum risk tier that triggers step_up_override: low/medium/high/critical",
+    )
+    intent_fail_closed: Optional[bool] = Field(
+        True, description="Force step_up on LLM verifier timeout/error when True"
+    )
 
 
 class ApprovalWorkflowCreate(ApprovalWorkflowBase):
@@ -178,12 +193,23 @@ class ApprovalWorkflowCreate(ApprovalWorkflowBase):
 
     name: str
     approval_type: str = "slack"
+    step_up_protocol: Optional[Literal["webauthn_discoverable"]] = Field(
+        None,
+        description=(
+            "Supported step-up protocol required before approval; null disables step-up"
+        ),
+    )
 
 
 class ApprovalWorkflowUpdate(ApprovalWorkflowBase):
     """Schema for updating approval workflow."""
 
-    pass
+    step_up_protocol: Optional[Literal["webauthn_discoverable"]] = Field(
+        None,
+        description=(
+            "Supported step-up protocol required before approval; null disables step-up"
+        ),
+    )
 
 
 class ApprovalWorkflowResponse(ApprovalWorkflowBase):
@@ -203,6 +229,7 @@ class ApprovalWorkflowResponse(ApprovalWorkflowBase):
     ai_confidence_threshold: float
     ai_fallback_behavior: str
     escalation_workflow_id: Optional[UUID] = None
+    step_up_protocol: Optional[str] = None
     # Timestamps
     created_at: datetime
     updated_at: datetime

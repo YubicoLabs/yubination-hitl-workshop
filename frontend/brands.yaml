@@ -1,0 +1,50 @@
+# Preloop - Open Source Edition
+# Minimal brand configuration for self-hosted deployments.
+#
+# edition: Controls UI behavior, not feature set
+#   - "saas": Full marketing landing page, pricing page, signup CTAs
+#   - "selfhosted": Minimal UI, redirects to login, no pricing page
+#
+# For enterprise self-hosted deployments, use the enterprise Docker image
+# but keep edition: "selfhosted" for the minimal UI experience.
+#
+
+brands:
+  preloop:
+    name: "Preloop"
+    domain: "localhost"
+    edition: "selfhosted"
+    workshop: true
+
+    branding:
+      logo_light: "/images/logos/preloop_logo_light.svg"
+      logo_dark: "/images/logos/preloop_logo_dark.svg"
+      favicon: "/assets/preloop-badge.png"
+      primary_color: "#7c3aed"
+      gradient_product: "linear-gradient(90deg, hsl(270, 70%, 55%), hsl(290, 75%, 50%))"
+      gradient_ai: "linear-gradient(90deg, hsl(200, 80%, 55%), hsl(180, 85%, 50%))"
+
+    landing:
+      meta:
+        title: "Preloop: The Policy Engine for AI Agents | MCP Firewall, Human Approvals, Audit Trail"
+        og_title: "Preloop: The Safety Layer for AI Agents"
+        description: "Define policies for AI agents & tools. Allow, deny, or require approval for any action based on context. Full visibility and audit trail for every AI operation. Works with OpenClaw, Claude Code, Cursor, and any MCP-compatible agent."
+        og_description: "AI agents are powerful but risky. Preloop lets you define exactly what they can do, what they cannot do, and what requires human approval."
+        extended_description: "Define policies for AI agents & tools. Allow, deny, or require approval for any action based on context. Full visibility and audit trail for every AI operation. Works with OpenClaw, Claude Code, Cursor, and any MCP-compatible agent."
+        keywords: "Preloop, AI agent firewall, AI safety policies, AI agent permissions, MCP proxy, OpenClaw safety, Claude Code policies, AI agent audit trail, production safety for AI, MCP, Model Context Protocol"
+      hero:
+        title: "The <span class=\"gradient-product\">Safety Layer</span> for AI Agents"
+        lead: "Control what AI agents can do, and what requires human approval."
+        cta_primary: "Sign In"
+        cta_primary_url: "/login"
+        og_image: "/assets/mcp-firewall.svg"
+
+      get_started:
+        title: "Onboard or connect your AI agent in minutes"
+        link_text: "See AI Act readiness guidance"
+        link_url: "/ai-act-readiness"
+
+        mcp_setup_title: "Start with a simple CLI setup, or connect Preloop manually"
+        cli_setup:
+          - step: "1. Install and Set Up"
+            command: "curl -fsSL https://preloop.ai/install/cli | sh"

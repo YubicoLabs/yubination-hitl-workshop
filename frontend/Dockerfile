@@ -23,6 +23,11 @@ COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
 # Copy built application
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Public artifacts may originate from a restrictive deployment umask. Vite and
+# COPY preserve their modes; normalize only this public tree for nginx workers.
+RUN find /usr/share/nginx/html -type d -exec chmod 0755 {} + \
+    && find /usr/share/nginx/html -type f -exec chmod 0644 {} +
+
 # Environment variables for API configuration
 ENV API_URL=http://localhost:8000
 ENV MOCK_API=false

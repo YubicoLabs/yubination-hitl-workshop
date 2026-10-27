@@ -1,0 +1,7 @@
+{
+  "chromeExtensionId": "lcknfcjhoadggemnifljpplfjnppofdk",
+  "nativeHosts": {
+    "macos": "com.example.sign_extension",
+    "windows": "com.yubico.previewsign_workshop"
+  }
+}

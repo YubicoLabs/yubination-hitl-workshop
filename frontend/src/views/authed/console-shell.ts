@@ -139,6 +139,7 @@ export class ConsoleShell extends LitElement {
       }
 
       .main-view {
+        min-width: 0;
         flex-grow: 1;
         display: grid;
         grid-template-rows: auto 1fr; /* Header row, Content row */
@@ -379,6 +380,15 @@ export class ConsoleShell extends LitElement {
                 <sl-menu-item>
                   <sl-icon name="shield-check" slot="prefix"></sl-icon>
                   <span class="sidebar-label">Approvals</span>
+                </sl-menu-item>
+              </a>
+              <a
+                href="/console/workshop/yubination"
+                @click=${this._closeSidebar}
+              >
+                <sl-menu-item>
+                  <sl-icon name="mortarboard" slot="prefix"></sl-icon>
+                  <span class="sidebar-label">Workshop</span>
                 </sl-menu-item>
               </a>
               ${this._featuresLoaded

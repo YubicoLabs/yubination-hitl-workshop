@@ -896,6 +896,32 @@ def initialize_mcp_with_tools() -> DynamicFastMCP:
                 # Uses a "claim + execute" pattern to avoid holding the DB
                 # lock during potentially long tool execution.
                 if approval_request.status == "approved":
+                    context = approval_request.server_recorded_context or {}
+                    mode = context.get("execution_mode")
+                    read_only = mode == "synchronous"
+                    if mode is None:
+                        from preloop.services.workshop_fixture import is_managed_request
+
+                        read_only = await db.run_sync(
+                            lambda session: is_managed_request(
+                                session,
+                                account_id=approval_request.account_id,
+                                request=approval_request,
+                            )
+                        )
+                    if read_only:
+                        completed = any(
+                            event.event_type == "workshop_execution_completed"
+                            and event.account_id == approval_request.account_id
+                            and event.approval_request_id == approval_request.id
+                            for event in events
+                        )
+                        response["execution"] = {
+                            "state": "completed" if completed else "unknown",
+                            "read_only": True,
+                        }
+                        return json.dumps(response)
+
                     cached = approval_request.tool_result
 
                     # Another request is already executing this tool

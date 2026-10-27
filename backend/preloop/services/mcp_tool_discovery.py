@@ -15,6 +15,8 @@ from preloop.models.models.mcp_server import MCPServer
 from preloop.models.models.mcp_tool import MCPTool
 from preloop.models.crud import crud_mcp_server, crud_mcp_tool, crud_tool_configuration
 
+from preloop.services.workshop_onboarding import managed_tool_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +37,20 @@ async def scan_mcp_server_tools(mcp_server_id: UUID, db: Session) -> List[MCPToo
     mcp_server = crud_mcp_server.get(db, id=mcp_server_id)
     if not mcp_server:
         raise ValueError(f"MCP server not found: {mcp_server_id}")
+
+    allowed_tool = managed_tool_name(mcp_server)
+    if allowed_tool:
+        # Managed workshop contracts are pinned, not expanded by upstream scans.
+        # A scan must never activate an incompletely provisioned source.
+        if mcp_server.status != "active":
+            raise ValueError(
+                "Workshop setup is incomplete; administrator retry required"
+            )
+        return [
+            tool
+            for tool in crud_mcp_tool.get_by_server(db, server_id=mcp_server_id)
+            if tool.name == allowed_tool
+        ]
 
     logger.info(f"Scanning MCP server: {mcp_server.name} ({mcp_server.url})")
 
@@ -171,10 +187,15 @@ def _get_proxied_tools_sync(
     proxied_tools = []
     for server in mcp_servers:
         tools = crud_mcp_tool.get_by_server(db, server_id=server.id)
+        allowed_tool = managed_tool_name(server)
         for tool in tools:
+            if allowed_tool and tool.name != allowed_tool:
+                continue
             # Check if tool has explicit configuration
             config_key = (tool.name, str(server.id))
-            is_enabled = config_map.get(config_key, True)  # Default to enabled
+            is_enabled = config_map.get(
+                config_key, not bool(allowed_tool)
+            )  # Default to enabled
 
             if is_enabled:
                 proxied_tools.append((server, tool))

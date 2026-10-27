@@ -27,6 +27,10 @@ from preloop.models.crud import (
     crud_runtime_session,
     crud_runtime_session_activity,
 )
+from preloop.schemas.enrollment_metadata import (
+    control_validation_ready,
+    project_validation,
+)
 from preloop.models.db.session import get_db_session
 from preloop.schemas.agent_control import (
     AgentControlCommandResponse,
@@ -109,13 +113,8 @@ def _agent_has_control_config(db: Session, *, account_id: str, agent: Any) -> bo
             if isinstance(enrollment.validation_result, dict)
             else {}
         )
-        validation_control_ready = bool(
-            validation.get("control_channel_configured")
-            or (
-                validation.get("control_plugin_verified")
-                and validation.get("control_ws_url_ok")
-                and validation.get("control_bearer_token_ok")
-            )
+        validation_control_ready = control_validation_ready(
+            project_validation(validation)
         )
         if validation_control_ready:
             return True
@@ -295,7 +294,7 @@ def _mark_control_verified_from_capabilities(
         enrollment_type="runtime_plugin_control",
     )
     validation_result = {
-        **(
+        **project_validation(
             latest_enrollment.validation_result
             if latest_enrollment is not None
             and isinstance(latest_enrollment.validation_result, dict)
@@ -311,11 +310,15 @@ def _mark_control_verified_from_capabilities(
         "control_runtime_session_id_present": True,
     }
     if latest_enrollment is not None:
-        latest_enrollment.status = "validated"
-        latest_enrollment.validation_result = validation_result
-        latest_enrollment.last_validated_at = datetime.now(UTC)
-        db.add(latest_enrollment)
-        db.commit()
+        crud_managed_agent_enrollment.mark_validated(
+            db,
+            account_id=str(context.runtime_session.account_id),
+            agent_id=str(context.managed_agent.id),
+            enrollment_id=str(latest_enrollment.id),
+            validation_result=validation_result,
+            status="validated",
+            commit=True,
+        )
         return
 
     crud_managed_agent_enrollment.create_for_agent(

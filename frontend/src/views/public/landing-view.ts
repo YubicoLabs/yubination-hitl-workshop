@@ -1,4 +1,4 @@
-import { LitElement, html, css, unsafeCSS } from 'lit';
+import { nothing, LitElement, html, css, unsafeCSS } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { getBrandConfig } from '../../brand-config';
 import { customElement, state, query } from 'lit/decorators.js';
@@ -423,6 +423,13 @@ export class LandingView extends LitElement {
       this._getStartedLinkText = getStartedLinkText.textContent || '';
     if (getStartedLinkUrl)
       this._getStartedLinkUrl = getStartedLinkUrl.textContent || '';
+    if (
+      getBrandConfig().workshop &&
+      this._getStartedLinkUrl === '/ai-act-readiness'
+    ) {
+      getStartedLinkText?.remove();
+      getStartedLinkUrl?.remove();
+    }
 
     // Read get-started features from light DOM slots
     const getStartedFeatures: Array<{
@@ -745,8 +752,13 @@ export class LandingView extends LitElement {
                 <sl-button
                   variant="primary"
                   size="large"
-                  @click=${this._handleSignup}
-                  >${this._ctaPrimary}</sl-button
+                  href=${getBrandConfig().workshop ? '/register' : nothing}
+                  @click=${getBrandConfig().workshop
+                    ? undefined
+                    : this._handleSignup}
+                  >${getBrandConfig().workshop
+                    ? 'Sign up for the workshop'
+                    : this._ctaPrimary}</sl-button
                 >
                 <sl-button
                   variant="text"
@@ -1245,11 +1257,14 @@ export class LandingView extends LitElement {
                   ${this._getStartedTitle ||
                   'Turbocharge your AI Workflow with MCP'}
                 </h2>
-                <a
-                  class="main-link"
-                  href="${this._getStartedLinkUrl || '/whatis-mcp'}"
-                  >${this._getStartedLinkText || 'What is MCP?'}</a
-                >
+                ${getBrandConfig().workshop &&
+                this._getStartedLinkUrl === '/ai-act-readiness'
+                  ? nothing
+                  : html`<a
+                      class="main-link"
+                      href="${this._getStartedLinkUrl || '/whatis-mcp'}"
+                      >${this._getStartedLinkText || 'What is MCP?'}</a
+                    >`}
               </div>
 
               ${this._getStartedFeatures.length > 0

@@ -351,6 +351,62 @@ class ApprovalWorkflow(Base):
         uselist=False,
     )
 
+    action_class: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="Action class for this workflow: read, write, delete, deploy, spend, admin, privacy",
+    )
+
+    step_up_protocol: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment=(
+            "Step-up protocol required before approval on this workflow. "
+            "NULL means no step-up. "
+            "Valid values: webauthn_discoverable, webauthn_sign, piv, webauthn_arkg_preview. "
+            "See preloop.services.step_up_registry.STEP_UP_PROTOCOLS."
+        ),
+    )
+
+    # ── Intent verifier configuration (Phase 1) ───────────────────────────────
+    intent_verification_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment=(
+            "Enable LLM-based intent verification for this workflow. "
+            "When False, only the rule-based pre-filter runs (Phase 0 behaviour)."
+        ),
+    )
+    intent_verification_model: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment=(
+            "LLM model for intent verification, e.g. 'claude-3-5-haiku-20241022'. "
+            "Provider is auto-detected from the model name. NULL = service default."
+        ),
+    )
+    intent_risk_threshold: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="high",
+        server_default="high",
+        comment=(
+            "Minimum risk tier that triggers step_up_override: low/medium/high/critical."
+        ),
+    )
+    intent_fail_closed: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+        comment=(
+            "When True, LLM verifier timeout or error forces step_up_required=True. "
+            "When False, falls back silently to workflow policy on failure."
+        ),
+    )
+
     # Unique constraint: one workflow name per account
     __table_args__ = (
         UniqueConstraint(

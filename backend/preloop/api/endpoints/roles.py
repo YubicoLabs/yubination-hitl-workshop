@@ -19,7 +19,7 @@ router = APIRouter()
 
 @router.get("/roles")
 @require_permission("view_users")
-async def list_roles(
+def list_roles(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: Session = Depends(get_db_session),
 ):

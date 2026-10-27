@@ -258,7 +258,10 @@ export class ToolsEditorComponent extends LitElement {
             ${enabledCount}/${totalCount} enabled
           </span>
           <div class="section-line"></div>
-          ${group.type === 'mcp' && group.server && this.mode === 'global'
+          ${group.type === 'mcp' &&
+          group.server &&
+          this.mode === 'global' &&
+          !this.features['workshop_configuration_locked']
             ? html`
                 <div
                   class="section-actions"
@@ -332,7 +335,9 @@ export class ToolsEditorComponent extends LitElement {
                       style="padding: var(--sl-spacing-small); color: var(--sl-color-neutral-400); font-size: var(--sl-font-size-small);"
                     >
                       No tools${this.filterText ? ' matching filter' : ''}.
-                      ${group.type === 'mcp' && this.mode === 'global'
+                      ${group.type === 'mcp' &&
+                      this.mode === 'global' &&
+                      !this.features['workshop_configuration_locked']
                         ? html`<sl-button
                             size="small"
                             variant="text"

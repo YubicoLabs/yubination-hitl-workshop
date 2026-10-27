@@ -45,6 +45,7 @@ export interface ApprovalWorkflow {
   ai_fallback_behavior?: 'escalate' | 'approve' | 'deny';
   escalation_workflow_id?: string;
   async_approval_enabled?: boolean;
+  step_up_protocol?: string | null;
 }
 
 interface AIModel {
@@ -96,6 +97,8 @@ export class ApprovalWorkflowDialog extends LitElement {
   @state() private _timeoutSeconds = 300;
   @state() private _isDefault = false;
   @state() private _asyncApprovalEnabled = false;
+  @state() private _stepUpProtocol: string | null = null;
+  private _stepUpProtocolChanged = false;
 
   // Standard type fields
   @state() private _approverUserIds: string[] = [];
@@ -276,6 +279,8 @@ export class ApprovalWorkflowDialog extends LitElement {
       this._timeoutSeconds = this.policy.timeout_seconds || 300;
       this._isDefault = this.policy.is_default || false;
       this._asyncApprovalEnabled = this.policy?.async_approval_enabled ?? false;
+      this._stepUpProtocol = this.policy.step_up_protocol ?? null;
+      this._stepUpProtocolChanged = false;
 
       // Standard fields
       this._approverUserIds = this.policy.approver_user_ids || [];
@@ -304,6 +309,8 @@ export class ApprovalWorkflowDialog extends LitElement {
     this._timeoutSeconds = 300;
     this._isDefault = false;
     this._asyncApprovalEnabled = false;
+    this._stepUpProtocol = null;
+    this._stepUpProtocolChanged = false;
     this._approverUserIds = [];
     this._approverTeamIds = [];
     this._approvalsRequired = 1;
@@ -366,6 +373,10 @@ export class ApprovalWorkflowDialog extends LitElement {
         is_default: this._isDefault,
         async_approval_enabled: this._asyncApprovalEnabled,
       };
+
+      if (!this.policy || this._stepUpProtocolChanged) {
+        policyData.step_up_protocol = this._stepUpProtocol;
+      }
 
       // Type-specific fields
       switch (this._approvalType) {
@@ -797,6 +808,44 @@ DENY if:
         <sl-divider></sl-divider>
 
         ${this._renderTypeSpecificFields()}
+
+        <div class="type-section">
+          <div class="type-section-header">
+            <sl-icon name="key"></sl-icon>
+            Hardware Step-Up
+          </div>
+          <div class="form-field">
+            <label class="form-label">Step-Up Protocol</label>
+            <sl-select
+              data-testid="step-up-protocol"
+              hoist
+              .value=${this._stepUpProtocol || ''}
+              @sl-change=${(e: Event) => {
+                const value = (e.target as HTMLSelectElement).value;
+                this._stepUpProtocol = value || null;
+                this._stepUpProtocolChanged = true;
+              }}
+            >
+              <sl-option value="">No hardware step-up</sl-option>
+              <sl-option value="webauthn_discoverable">
+                WebAuthn hardware key
+              </sl-option>
+              ${this._stepUpProtocol &&
+              this._stepUpProtocol !== 'webauthn_discoverable'
+                ? html`
+                    <sl-option value=${this._stepUpProtocol}>
+                      Existing configuration (${this._stepUpProtocol})
+                    </sl-option>
+                  `
+                : null}
+            </sl-select>
+            <small style="color: var(--sl-color-neutral-500);">
+              WebAuthn requires each participant who approves a request to have
+              a registered hardware key. WebAuthn is the ceremony protocol;
+              selecting it does not guarantee a post-quantum algorithm.
+            </small>
+          </div>
+        </div>
 
         <div class="form-field">
           <div

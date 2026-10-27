@@ -28,5 +28,15 @@ def get_features() -> Dict[str, Any]:
 
     # Add config-based feature flags
     result["features"]["registration"] = settings.registration_enabled
+    result["features"]["workshop_configuration_locked"] = (
+        settings.workshop_configuration_locked
+    )
+    result["features"]["webauthn_login"] = settings.webauthn_login_enabled
+    result["features"]["workshop_signup_code_required"] = (
+        settings.workshop_signup_code_required
+    )
 
+    result["workshop"] = {
+        "source_repository_url": settings.workshop_source_repository_url
+    }
     return result

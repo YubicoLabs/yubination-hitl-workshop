@@ -11,7 +11,7 @@ import copy
 import logging
 import uuid
 from contextvars import ContextVar
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from fastmcp import FastMCP
 from fastmcp.tools import Tool
@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 # it up from the tool configuration.
 _rule_workflow_id_var: ContextVar[Optional[str]] = ContextVar(
     "_rule_workflow_id_var", default=None
+)
+
+# Request-local evidence recorded separately from the signed intent. It is
+# server-recorded context and is not cryptographically bound by v1/v2 signatures.
+_policy_evidence_var: ContextVar[Optional[dict[str, Any]]] = ContextVar(
+    "_policy_evidence_var", default=None
 )
 
 # Context variable to pass a unique correlation_id from _call_tool() through
@@ -64,6 +70,53 @@ _bypass_approval_var: ContextVar[bool] = ContextVar(
 _is_proxy_translation_var: ContextVar[bool] = ContextVar(
     "_is_proxy_translation_var", default=False
 )
+
+
+def build_server_recorded_context(
+    user_context: UserContext,
+    policy_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Build evidence only from authenticated context and evaluator output.
+
+    Caller-provided metadata is not an input to this evidence builder.
+    """
+    api_key_id = getattr(user_context, "api_key_id", None)
+    managed_agent_id = getattr(user_context, "managed_agent_id", None)
+    authentication: dict[str, Any] = {
+        "type": "api_key_credential" if api_key_id else "authenticated_user_session"
+    }
+    if api_key_id:
+        authentication["credential_id"] = str(api_key_id)
+
+    username = getattr(user_context, "username", None)
+    display_fields = {}
+    if isinstance(username, str) and username.strip():
+        display_fields = {
+            "display_name": username.strip(),
+            "display_name_source": "authenticated_user_profile",
+        }
+
+    return {
+        "schema_version": 1,
+        "record_type": "server_recorded_context",
+        "cryptographically_bound": False,
+        "requester": {
+            "account_id": str(user_context.account_id),
+            "authenticated_user_id": str(user_context.user_id),
+            **display_fields,
+            "authentication": authentication,
+            "agent": {
+                "id": str(managed_agent_id) if managed_agent_id else None,
+                "identity_status": (
+                    "configured_association_unverified"
+                    if managed_agent_id
+                    else "not_established"
+                ),
+            },
+        },
+        "delegation": {"status": "not_recorded"},
+        "policy": copy.deepcopy(policy_evidence),
+    }
 
 
 class DynamicFastMCP(FastMCP):
@@ -115,6 +168,9 @@ class DynamicFastMCP(FastMCP):
             List of tools available to the current user
         """
         logger.info("!!! list_tools called - ENTRY POINT !!!")
+        # Reset only on the outer call: translated proxy re-entry carries evidence.
+        _policy_evidence_var.set(None)
+
         # Get current user context
         user_context = self._get_current_user_context()
         logger.info(f"!!! Got user context: {user_context} !!!")
@@ -522,6 +578,7 @@ async def {internal_name}({params_str}) -> str:
         value = locals().get(param_name)
         if value is not None:
             arguments[param_name] = value
+    approved_arguments = copy.deepcopy(arguments)
 
     # Read justification from context var — _call_tool() already stripped it
     # from arguments and stored it in _justification_var.
@@ -530,66 +587,91 @@ async def {internal_name}({params_str}) -> str:
 
     # Check approval with streaming (we have Context!)
     # The workflow_id may have been set by _call_tool() after evaluating access rules.
-    from preloop.services.approval_helper import require_approval
+    from preloop.services.approval_helper import ApprovalTimeoutMessage, require_approval
     rule_workflow_id = _rule_workflow_id_var.get(None)
     corr_id = _correlation_id_var.get(None)
 
-    approved, error = await require_approval(
-        tool_name=tool_name,
-        tool_source="mcp",
-        account_id=account_id,
-        arguments=arguments,
-        ctx=ctx,
-        workflow_id=rule_workflow_id,
-        correlation_id=corr_id,
-        justification=justification,
-    )
-
-    if not approved:
-        return error
-
-    # Call external MCP server
+    from preloop.services.approval_helper import approved_request_id
+    approval_token = approved_request_id.set(None)
     try:
-        db = next(get_db())
-        try:
-            # Use CRUD layer to get MCP server
-            mcp_server = crud_mcp_server.get(db, id=server_id, account_id=account_id)
-
-            if not mcp_server:
-                return f"Error: MCP server {{server_id}} not found"
-
-            # Get client from pool
-            client_pool = get_mcp_client_pool()
-            client = await client_pool.get_client(
-                server_id=server_id,
-                url=mcp_server.url,
-                auth_type=mcp_server.auth_type,
-                auth_config=mcp_server.auth_config,
-                transport=mcp_server.transport,
-            )
-
-            # Call tool on external server
-            result = await client.call_tool(tool_name, arguments)
-            logger.info(
-                f"Tool {{tool_name}} executed successfully on external server"
-            )
-
-            # Convert result to string
-            if isinstance(result, list):
-                return "\\n".join(
-                    item.text if hasattr(item, "text") else str(item)
-                    for item in result
-                )
-            return str(result)
-
-        finally:
-            db.close()
-
-    except Exception as e:
-        logger.error(
-            f"Error executing proxied tool {{tool_name}}: {{e}}", exc_info=True
+        approved, error = await require_approval(
+            tool_name=tool_name,
+            tool_source="mcp",
+            account_id=account_id,
+            arguments=approved_arguments,
+            ctx=ctx,
+            workflow_id=rule_workflow_id,
+            correlation_id=corr_id,
+            justification=justification,
         )
-        return f"Error executing tool: {{str(e)}}"
+
+        if not approved:
+            if isinstance(error, ApprovalTimeoutMessage):
+                from fastmcp.exceptions import ToolError
+                raise ToolError(str(error))
+            return error
+        if approved_arguments != arguments:
+            return "Approval arguments changed during approval; tool was not executed"
+        execution_arguments = copy.deepcopy(approved_arguments)
+
+        # Call external MCP server
+        try:
+            db = next(get_db())
+            try:
+                # Use CRUD layer to get MCP server
+                mcp_server = crud_mcp_server.get(db, id=server_id, account_id=account_id)
+
+                if not mcp_server:
+                    return f"Error: MCP server {{server_id}} not found"
+
+                # Managed bounded operations retain this authenticated approval wrapper.
+                from preloop.services import workshop_fixture
+                if workshop_fixture.is_source(mcp_server):
+                    import json
+                    return json.dumps(workshop_fixture.execute(
+                        db, source=mcp_server, account_id=account_id,
+                        tool=tool_name, arguments=execution_arguments,
+                        completion_request_id=approved_request_id.get(), source_id=server_id,
+                    ))
+
+                # Get client from pool
+                client_pool = get_mcp_client_pool()
+                client = await client_pool.get_client(
+                    server_id=server_id,
+                    url=mcp_server.url,
+                    auth_type=mcp_server.auth_type,
+                    auth_config=mcp_server.auth_config,
+                    transport=mcp_server.transport,
+                )
+
+                # Call tool on external server
+                result = await client.call_tool(tool_name, execution_arguments)
+                logger.info(
+                    f"Tool {{tool_name}} executed successfully on external server"
+                )
+
+                # Convert result to string
+                if isinstance(result, list):
+                    return "\\n".join(
+                        item.text if hasattr(item, "text") else str(item)
+                        for item in result
+                    )
+                return str(result)
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            from fastmcp.exceptions import ToolError
+            if isinstance(e, ToolError):
+                raise
+            logger.error(
+                f"Error executing proxied tool {{tool_name}}: {{e}}", exc_info=True
+            )
+            return f"Error executing tool: {{str(e)}}"
+    finally:
+        approved_request_id.reset(approval_token)
+
 """
 
         # Create local namespace with required variables
@@ -605,6 +687,7 @@ async def {internal_name}({params_str}) -> str:
             "get_mcp_client_pool": get_mcp_client_pool,
             "Optional": Optional,
             "Context": Context,
+            "copy": __import__("copy"),
             "_rule_workflow_id_var": _rule_workflow_id_var,
             "_correlation_id_var": _correlation_id_var,
         }
@@ -658,12 +741,6 @@ async def {internal_name}({params_str}) -> str:
 
         arguments = arguments or {}
 
-        # Extract justification from arguments before it reaches the tool function.
-        # Justification is injected into the schema by list_tools() but isn't part
-        # of the actual tool's function signature.
-        justification = arguments.pop("justification", None)
-        _justification_var.set(justification)
-
         logger.info(f"!!! call_tool called for tool: {name} !!!")
 
         # ── Internal proxied tool name re-entry ─────────────────────────
@@ -703,6 +780,15 @@ async def {internal_name}({params_str}) -> str:
                 run_middleware=run_middleware,
                 task_meta=task_meta,
             )
+
+        # Extract justification from arguments before it reaches the tool function.
+        # Justification is injected into the schema by list_tools() but isn't part
+        # of the actual tool's function signature.
+        justification = arguments.pop("justification", None)
+        _justification_var.set(justification)
+
+        # Reset only on the outer call: translated proxy re-entry carries evidence.
+        _policy_evidence_var.set(None)
 
         # Get current user context
         user_context = self._get_current_user_context()
@@ -819,6 +905,7 @@ async def {internal_name}({params_str}) -> str:
             from preloop.services.policy_evaluator import evaluate_policy_async
 
             async with get_async_db_session() as db:
+                policy_evidence: dict[str, Any] = {}
                 action, approval_workflow_id, reason = await evaluate_policy_async(
                     db=db,
                     tool_name=name,
@@ -844,7 +931,12 @@ async def {internal_name}({params_str}) -> str:
                         "api_key_id": user_context.api_key_id,
                         "api_key_name": user_context.api_key_name,
                     },
+                    evidence_out=policy_evidence,
                 )
+
+            _policy_evidence_var.set(
+                build_server_recorded_context(user_context, policy_evidence)
+            )
 
             logger.info(
                 f"Policy evaluation for '{name}': action={action}, "
@@ -941,6 +1033,7 @@ async def {internal_name}({params_str}) -> str:
 
             # Clean up context vars after execution
             _rule_workflow_id_var.set(None)
+            _policy_evidence_var.set(None)
             _correlation_id_var.set(None)
 
             # ── Audit: log tool execution ───────────────────────────────

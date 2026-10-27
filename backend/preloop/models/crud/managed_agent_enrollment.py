@@ -7,6 +7,14 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
+from preloop.schemas.enrollment_metadata import (
+    ADAPTER_KEYS,
+    ENROLLMENT_STATUSES,
+    project_enrollment_request,
+    project_validation,
+    protocol_value,
+)
+
 from ..models.managed_agent_enrollment import ManagedAgentEnrollment
 from .base import CRUDBase
 
@@ -66,19 +74,28 @@ class CRUDManagedAgentEnrollment(CRUDBase[ManagedAgentEnrollment]):
         last_restored_at: Optional[datetime] = None,
         commit: bool = True,
     ) -> ManagedAgentEnrollment:
+        metadata = project_enrollment_request(
+            {
+                "enrollment_type": enrollment_type,
+                "adapter_key": adapter_key,
+                "status": status,
+                "managed_config": managed_config,
+                "validation_result": validation_result,
+            }
+        )
         db_obj = ManagedAgentEnrollment(
             account_id=account_id,
             managed_agent_id=agent_id,
             created_by_user_id=created_by_user_id,
-            enrollment_type=enrollment_type,
-            adapter_key=adapter_key,
-            status=status,
-            target_config_path=target_config_path,
-            discovered_config=discovered_config or {},
-            managed_config=managed_config or {},
-            backup_metadata=backup_metadata or {},
-            validation_result=validation_result or {},
-            restore_available=restore_available,
+            enrollment_type=metadata["enrollment_type"],
+            adapter_key=metadata["adapter_key"],
+            status=metadata["status"],
+            target_config_path=None,
+            discovered_config={},
+            managed_config={},
+            backup_metadata={},
+            validation_result=metadata["validation_result"],
+            restore_available=restore_available is True,
             last_applied_at=last_applied_at,
             last_validated_at=last_validated_at,
             last_restored_at=last_restored_at,
@@ -143,6 +160,7 @@ class CRUDManagedAgentEnrollment(CRUDBase[ManagedAgentEnrollment]):
         runtime_session_id: Any,
         commit: bool = True,
     ) -> ManagedAgentEnrollment:
+        """Upsert finite metadata; session references remain on runtime records."""
         db_obj = self.get_latest_for_agent_by_type(
             db,
             account_id=str(account_id),
@@ -150,18 +168,8 @@ class CRUDManagedAgentEnrollment(CRUDBase[ManagedAgentEnrollment]):
             enrollment_type="runtime_session_bootstrap",
         )
         now = _utc_now()
-        discovered_config = {
-            "session_source_type": session_source_type,
-            "session_source_id": session_source_id,
-            "session_reference": session_reference,
-            "display_name": display_name,
-        }
-        managed_config = {
-            "managed_mcp_servers": managed_mcp_servers,
-            "runtime_session_id": str(runtime_session_id),
-        }
         if db_obj is None:
-            return self.create_for_agent(
+            db_obj = self.create_for_agent(
                 db,
                 account_id=account_id,
                 agent_id=agent_id,
@@ -169,23 +177,20 @@ class CRUDManagedAgentEnrollment(CRUDBase[ManagedAgentEnrollment]):
                 enrollment_type="runtime_session_bootstrap",
                 adapter_key=session_source_type,
                 status="active",
-                target_config_path=session_reference,
-                discovered_config=discovered_config,
-                managed_config=managed_config,
-                validation_result={"bootstrap": True},
                 restore_available=False,
                 last_applied_at=now,
                 last_validated_at=now,
-                commit=commit,
+                commit=False,
             )
 
         db_obj.created_by_user_id = created_by_user_id
-        db_obj.adapter_key = session_source_type
+        db_obj.adapter_key = protocol_value(session_source_type, ADAPTER_KEYS, None)
         db_obj.status = "active"
-        db_obj.target_config_path = session_reference
-        db_obj.discovered_config = discovered_config
-        db_obj.managed_config = managed_config
-        db_obj.validation_result = {"bootstrap": True}
+        db_obj.target_config_path = None
+        db_obj.discovered_config = {}
+        db_obj.managed_config = {}
+        db_obj.backup_metadata = {}
+        db_obj.validation_result = project_validation(db_obj.validation_result)
         db_obj.last_applied_at = now
         db_obj.last_validated_at = now
         db.add(db_obj)
@@ -215,8 +220,8 @@ class CRUDManagedAgentEnrollment(CRUDBase[ManagedAgentEnrollment]):
         )
         if db_obj is None:
             return None
-        db_obj.status = status
-        db_obj.validation_result = validation_result or {}
+        db_obj.status = protocol_value(status, ENROLLMENT_STATUSES, "pending")
+        db_obj.validation_result = project_validation(validation_result)
         db_obj.last_validated_at = _utc_now()
         db.add(db_obj)
         if commit:
@@ -246,17 +251,11 @@ class CRUDManagedAgentEnrollment(CRUDBase[ManagedAgentEnrollment]):
         )
         if db_obj is None:
             return None
-        if backup_metadata:
-            db_obj.backup_metadata = {
-                **(db_obj.backup_metadata or {}),
-                **backup_metadata,
-            }
-        if validation_result:
-            db_obj.validation_result = {
-                **(db_obj.validation_result or {}),
-                **validation_result,
-            }
-        db_obj.status = status
+        db_obj.validation_result = {
+            **project_validation(db_obj.validation_result),
+            **project_validation(validation_result),
+        }
+        db_obj.status = protocol_value(status, ENROLLMENT_STATUSES, "pending")
         db_obj.restore_available = False
         db_obj.last_restored_at = _utc_now()
         db.add(db_obj)

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { width: 280px; padding: 12px 16px; font-family: system-ui, sans-serif; font-size: 13px; }
+    label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    input[type="checkbox"] { width: 16px; height: 16px; }
+    .desc { color: #666; font-size: 11px; margin-top: 6px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <label>
+    <input type="checkbox" id="captureAll">
+    Capture all WebAuthn calls
+  </label>
+  <div class="desc">
+    When enabled, all navigator.credentials calls are routed through the extension,
+    not just those with previewSign.
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

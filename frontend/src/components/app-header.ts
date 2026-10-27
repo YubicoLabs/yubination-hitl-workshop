@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { Router } from '@vaadin/router';
-import { getUserProfile, getFeatures } from '../api';
+import { getUserProfile, getFeatures, ProfileRequestError } from '../api';
 import { getBrandConfig, isSaaS } from '../brand-config';
 
 import '@shoelace-style/shoelace/dist/components/button/button.js';
@@ -36,6 +36,15 @@ export class AppHeader extends LitElement {
 
   @state()
   private registrationEnabled = true;
+
+  @state()
+  private sourceRepository = '';
+
+  private authCheckId = 0;
+  private readonly onAuthChange = () => {
+    void this.checkAuth();
+  };
+  private readonly onRouteChange = () => this.requestUpdate();
 
   static styles = css`
     :host {
@@ -112,21 +121,31 @@ export class AppHeader extends LitElement {
     super.connectedCallback();
     this.checkAuth();
     this.checkBillingEnabled();
-    window.addEventListener('auth-change', () => this.checkAuth());
-    window.addEventListener('vaadin-router-location-changed', () =>
-      this.requestUpdate()
+    window.addEventListener('auth-change', this.onAuthChange);
+    window.addEventListener(
+      'vaadin-router-location-changed',
+      this.onRouteChange
     );
   }
 
   async checkBillingEnabled() {
     try {
       const features = await getFeatures();
+      const value = features.workshop?.source_repository_url ?? '';
+      // Match the existing workshop source repository validation.
+      this.sourceRepository =
+        /^https:\/\/github\.com\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(
+          value
+        ) && !['.', '..'].includes(value.split('/').pop()!)
+          ? value
+          : '';
       this.billingEnabled = features.features['billing'] === true;
       this.oauthSigninEnabled = features.features['oauth_signin'] === true;
       // Registration is enabled by default, unless explicitly disabled
       this.registrationEnabled = features.features['registration'] !== false;
     } catch (error) {
       console.error('Failed to check billing feature:', error);
+      this.sourceRepository = '';
       this.billingEnabled = false;
       this.oauthSigninEnabled = false;
       this.registrationEnabled = true;
@@ -178,22 +197,43 @@ export class AppHeader extends LitElement {
   }
 
   disconnectedCallback() {
-    window.removeEventListener('auth-change', () => this.checkAuth());
-    window.removeEventListener('vaadin-router-location-changed', () =>
-      this.requestUpdate()
+    this.authCheckId += 1;
+    window.removeEventListener('auth-change', this.onAuthChange);
+    window.removeEventListener(
+      'vaadin-router-location-changed',
+      this.onRouteChange
     );
     super.disconnectedCallback();
   }
 
   async checkAuth() {
+    const checkId = ++this.authCheckId;
     const token = localStorage.getItem('accessToken');
     this.isAuthenticated = !!token;
     if (this.isAuthenticated) {
       try {
-        this.user = await getUserProfile();
+        const user = await getUserProfile();
+        if (
+          this.isConnected &&
+          checkId === this.authCheckId &&
+          token === localStorage.getItem('accessToken')
+        ) {
+          this.user = user;
+        }
       } catch (error) {
-        console.error('Failed to fetch user details', error);
-        this.logout();
+        if (!this.isConnected) return;
+        // Navigation aborts and transient failures are not credential rejection.
+        if (error instanceof ProfileRequestError && error.status === 401) {
+          if (error.isCurrentCredential()) this.logout();
+        } else {
+          if (
+            checkId !== this.authCheckId ||
+            token !== localStorage.getItem('accessToken')
+          )
+            return;
+          this.user = null;
+          console.error('Failed to fetch user details', error);
+        }
       }
     } else {
       this.user = null;
@@ -214,13 +254,16 @@ export class AppHeader extends LitElement {
   }
 
   render() {
+    const sourceRepository = getBrandConfig().workshop
+      ? this.sourceRepository
+      : 'https://github.com/preloop/preloop';
     return html`
       <header>
         <div class="header-container">
           <div class="flex items-center">
             ${this.showDrawerToggle
               ? html`<sl-icon-button
-                  name="menu"
+                  name="list"
                   @click=${() =>
                     this.dispatchEvent(
                       new CustomEvent('toggle-drawer', {
@@ -239,13 +282,15 @@ export class AppHeader extends LitElement {
                 </div>`}
           </div>
           <nav class="${this.isMenuOpen ? 'mobile-menu-open' : ''}">
-            <sl-icon-button
-              name="github"
-              href="https://github.com/preloop/preloop"
-              target="_blank"
-              label="GitHub Repository"
-              style="font-size: 1.25rem;"
-            ></sl-icon-button>
+            ${sourceRepository
+              ? html`<sl-icon-button
+                  name="github"
+                  href=${sourceRepository}
+                  target="_blank"
+                  label="GitHub Repository"
+                  style="font-size: 1.25rem;"
+                ></sl-icon-button>`
+              : ''}
             <sl-button
               href="https://docs.preloop.ai"
               target="_blank"

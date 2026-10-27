@@ -342,6 +342,27 @@ func executeManagedEnrollment(agent AgentConfig, opts managedEnrollmentOptions) 
 		}
 	}
 
+	var launcherCommand string
+	switch strings.ToLower(strings.TrimSpace(agent.Name)) {
+	case "codex cli":
+		launcherCommand = "codex"
+	case "gemini cli":
+		launcherCommand = "gemini"
+	}
+	if launcherCommand != "" {
+		launcherPath, err := managedAgentLauncherPath(launcherCommand)
+		if err != nil {
+			return err
+		}
+		if _, err := resolveManagedAgentExecutablePath(launcherCommand, launcherPath); err != nil {
+			return fmt.Errorf("failed to locate %s executable for managed launcher: %w", launcherCommand, err)
+		}
+	}
+
+	if _, err := validatedLocalEnrollmentState(agent); err != nil {
+		return err
+	}
+
 	serverSync, err := ensureDiscoveredRemoteServers(client, syncAgent, baseURL)
 	if err != nil {
 		return err
@@ -496,6 +517,9 @@ func executeManagedEnrollment(agent AgentConfig, opts managedEnrollmentOptions) 
 	if err != nil {
 		return err
 	}
+	if err := saveLocalEnrollmentState(backupState); err != nil {
+		return err
+	}
 	if err := writeAgentConfigDocument(agent, plan.ManagedDocument); err != nil {
 		return err
 	}
@@ -506,9 +530,6 @@ func executeManagedEnrollment(agent AgentConfig, opts managedEnrollmentOptions) 
 		return err
 	}
 	pluginInstallResult := installAgentControlRuntimePlugin(agent, output)
-	if err := saveLocalEnrollmentState(backupState); err != nil {
-		return err
-	}
 
 	validationDocument, err := loadAgentConfigDocument(agent)
 	if err != nil {
@@ -5313,8 +5334,9 @@ func expandAgentConfigPath(home string, path string) string {
 func buildManagedRemoteServerRequest(
 	name string,
 	server MCPDef,
+	baseURL string,
 ) (map[string]interface{}, string, string, bool) {
-	if isPreloopOwnedMCPServer(name, server) {
+	if isPreloopOwnedMCPServer(server, baseURL) {
 		return nil, fmt.Sprintf(
 			"MCP server %q points at Preloop and was skipped; onboarding will configure this instance's managed Preloop MCP instead.",
 			name,

@@ -6,6 +6,9 @@ actions with priority-based rule evaluation.
 """
 
 import logging
+import hashlib
+import json
+from datetime import datetime, timezone
 import re
 import uuid
 from typing import Any, Dict, Optional, Tuple
@@ -115,6 +118,73 @@ def _log_policy_decision_async(
         logger.debug(f"Failed to log policy decision to audit: {e}")
 
 
+def _record_policy_evidence(
+    evidence_out: Optional[Dict[str, Any]],
+    *,
+    evaluation_source: str,
+    action: str,
+    approval_workflow_id: Optional[Any],
+    rule_id: Optional[Any] = None,
+    condition: Optional[str] = None,
+    scope: Optional[str] = None,
+    evaluation_outcome: str = "matched",
+    condition_type: Optional[str] = None,
+    rule_order: Optional[int] = None,
+    tool_name: Optional[str] = None,
+) -> None:
+    """Replace caller-owned evidence with the exact evaluation decision."""
+    if evidence_out is None:
+        return
+    evidence_out.clear()
+    evidence_out.update(
+        {
+            "evaluation_source": evaluation_source,
+            "evaluation_outcome": evaluation_outcome,
+            "matched_rule": (
+                {
+                    "id": str(rule_id),
+                    "action": str(action),
+                    "condition": condition,
+                }
+                if rule_id is not None
+                else None
+            ),
+            "approval_workflow_id": (
+                str(approval_workflow_id) if approval_workflow_id is not None else None
+            ),
+        }
+    )
+    recorded_rule = evidence_out["matched_rule"]
+    if recorded_rule is not None:
+        recorded_rule.update(condition_type=condition_type, order=rule_order)
+        digest_input = {
+            **recorded_rule,
+            "approval_workflow_id": evidence_out["approval_workflow_id"],
+            "scope": scope,
+        }
+        recorded_rule["content_digest"] = hashlib.sha256(
+            json.dumps(
+                digest_input, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("utf-8")
+        ).hexdigest()
+        recorded_rule["digest_format"] = "sha256:python-json-sortkeys-utf8-v1"
+    evidence_out["evaluated_at"] = datetime.now(timezone.utc).isoformat()
+    if tool_name is not None:
+        evidence_out["context"] = {
+            "tool_name": tool_name,
+            "arguments_source": "approval_request.tool_args",
+            "completeness": "minimal",
+        }
+    if evaluation_outcome == "error_fallback":
+        evidence_out["evaluated_rule"] = evidence_out["matched_rule"]
+        evidence_out["matched_rule"] = None
+    if rule_id is None:
+        evidence_out["action"] = str(action)
+        evidence_out["condition"] = condition
+    if scope is not None:
+        evidence_out["scope"] = scope
+
+
 def _evaluate_rule_candidates(
     *,
     rules: list[Any],
@@ -127,6 +197,9 @@ def _evaluate_rule_candidates(
     correlation_id: Optional[str] = None,
     extra_details: Optional[Dict[str, Any]] = None,
     default_approval_workflow_id: Optional[Any] = None,
+    evidence_out: Optional[Dict[str, Any]] = None,
+    evaluation_source: str = "subject_governance",
+    scope: Optional[str] = None,
 ) -> Optional[Tuple[str, Optional[Any], Optional[str]]]:
     for index, rule in enumerate(rules):
         is_enabled = (
@@ -177,6 +250,21 @@ def _evaluate_rule_candidates(
                 correlation_id=correlation_id,
                 extra_details=extra_details,
             )
+            rule_id = (
+                rule.get("id") if isinstance(rule, dict) else getattr(rule, "id", None)
+            )
+            _record_policy_evidence(
+                evidence_out,
+                evaluation_source=evaluation_source,
+                action=str(action),
+                approval_workflow_id=approval_workflow_id,
+                rule_id=rule_id,
+                condition=condition_expression,
+                scope=scope,
+                condition_type=str(condition_type or "simple"),
+                rule_order=index,
+                tool_name=tool_name,
+            )
             return action, approval_workflow_id, rule_desc
         except Exception as e:
             error_desc = f"Rule evaluation error: {e} (failing closed)"
@@ -191,6 +279,22 @@ def _evaluate_rule_candidates(
                 execution_id=execution_id,
                 correlation_id=correlation_id,
                 extra_details=extra_details,
+            )
+            rule_id = (
+                rule.get("id") if isinstance(rule, dict) else getattr(rule, "id", None)
+            )
+            _record_policy_evidence(
+                evidence_out,
+                evaluation_source=evaluation_source,
+                action="require_approval",
+                approval_workflow_id=approval_workflow_id,
+                rule_id=rule_id,
+                condition=condition_expression,
+                scope=scope,
+                condition_type=str(condition_type or "simple"),
+                rule_order=index,
+                tool_name=tool_name,
+                evaluation_outcome="error_fallback",
             )
             return "require_approval", approval_workflow_id, error_desc
     return None
@@ -747,6 +851,7 @@ async def evaluate_policy_async(
     correlation_id: Optional[str] = None,
     extra_details: Optional[Dict[str, Any]] = None,
     subject_context: Optional[Dict[str, Any]] = None,
+    evidence_out: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[uuid.UUID], Optional[str]]:
     """Async version of evaluate_policy.
 
@@ -812,6 +917,8 @@ async def evaluate_policy_async(
             (tool_config.approval_workflow_id if tool_config else None)
             or default_workflow_id_for_account
         ),
+        evidence_out=evidence_out,
+        evaluation_source="subject_governance",
     )
     if scoped_decision is not None:
         return scoped_decision
@@ -867,6 +974,15 @@ async def evaluate_policy_async(
                 correlation_id=correlation_id,
                 extra_details=extra_details,
             )
+            _record_policy_evidence(
+                evidence_out,
+                evaluation_source="tool_configuration",
+                action="require_approval",
+                approval_workflow_id=tool_config.approval_workflow_id,
+                condition=None,
+                scope="account",
+                tool_name=tool_name,
+            )
             return (
                 "require_approval",
                 tool_config.approval_workflow_id,
@@ -886,7 +1002,7 @@ async def evaluate_policy_async(
         return "allow", None, "No access rules defined"
 
     # Evaluate rules in priority order
-    for rule in rules:
+    for rule_index, rule in enumerate(rules):
         try:
             matches = _evaluate_rule_condition(
                 expression=rule.condition_expression,
@@ -930,6 +1046,18 @@ async def evaluate_policy_async(
                     correlation_id=correlation_id,
                     extra_details=extra_details,
                 )
+                _record_policy_evidence(
+                    evidence_out,
+                    evaluation_source="tool_access_rule",
+                    action=str(rule.action),
+                    approval_workflow_id=approval_workflow_id,
+                    rule_id=rule.id,
+                    condition=rule.condition_expression,
+                    scope="account",
+                    condition_type=str(rule.condition_type or "simple"),
+                    rule_order=rule_index,
+                    tool_name=tool_name,
+                )
 
                 return (
                     rule.action,
@@ -956,9 +1084,25 @@ async def evaluate_policy_async(
                 correlation_id=correlation_id,
                 extra_details=extra_details,
             )
+            fallback_workflow_id = (
+                tool_config.approval_workflow_id or default_workflow_id_for_account
+            )
+            _record_policy_evidence(
+                evidence_out,
+                evaluation_source="tool_access_rule",
+                action="require_approval",
+                approval_workflow_id=fallback_workflow_id,
+                rule_id=rule.id,
+                condition=rule.condition_expression,
+                scope="account",
+                evaluation_outcome="error_fallback",
+                condition_type=str(rule.condition_type or "simple"),
+                rule_order=rule_index,
+                tool_name=tool_name,
+            )
             return (
                 "require_approval",
-                tool_config.approval_workflow_id or default_workflow_id_for_account,
+                fallback_workflow_id,
                 error_desc,
             )
 

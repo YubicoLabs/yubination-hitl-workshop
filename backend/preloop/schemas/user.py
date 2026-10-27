@@ -53,6 +53,7 @@ class AdminUserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = Field(None, max_length=255)
     is_active: Optional[bool] = None
+    require_mfa_login: Optional[bool] = None
 
 
 class UserPasswordUpdate(BaseModel):
@@ -74,6 +75,7 @@ class AdminUserResponse(BaseModel):
     email_verified: bool
     full_name: Optional[str]
     is_active: bool
+    require_mfa_login: bool
     user_source: str
     oauth_provider: Optional[str]
     last_login: Optional[datetime]

@@ -1,0 +1,187 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "preloop"
+version = "0.9.3"
+description = "Preloop - Control plane & safety layer for your agentic AI workforce"
+readme = "README.md"
+authors = [{name = "Dimitris Moraitis", email = "dimitris@preloop.ai"}, {name = "Yannis Chatzikonstantinou", email = "yannis@preloop.ai"}]
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.72.0",
+    "uvicorn[standard]>=0.36.0",
+    "fastapi>=0.129.2",
+    "sqlalchemy>=2.0.0",
+    "greenlet>=3.0.0",  # Required for SQLAlchemy async operations
+    "psycopg[binary]>=3.1.12",
+    "psycopg2-binary>=2.9.0",  # Required for SQLAlchemy sync engine
+    "pgvector>=0.2.0",
+    "pydantic>=2.4.0",
+    "pydantic-settings>=2.0.0",
+    "pydantic[email]>=2.4.0",
+    "python-jose>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt<4.1.0",
+    "python-multipart>=0.0.6",
+    "httpx[http2]>=0.24.1",  # http2 extra required for APNs push notifications
+    "tenacity>=8.2.3",
+    "python-json-logger>=2.0.0",
+    "jinja2>=3.1.2",
+    "aiosmtplib>=2.0.2",
+    "loguru>=0.7.3",
+    "aiohttp>=3.9.0", # Added for Jira client
+    "sentry-sdk[fastapi]>=2.9.0",
+    "pyinstrument>=4.6.2",
+    "nats-py>=2.6.0", # Added for NATS integration
+    "stripe>=12.4.0",
+    "fastmcp>=3.2.0,<4.0.0",  # upgraded for dynamic tools and context processing
+    "aiodocker>=0.21.0", # Added for agent container execution
+    "kubernetes_asyncio>=30.5.0", # Added for Kubernetes agent execution
+    "cel-python>=0.1.0", # Added for CEL expression evaluation in approval rules
+    "python-dotenv>=1.2.1",
+    # Dependencies from preloop-models
+    "alembic>=1.10.0",
+    "numpy>=1.24.0",
+    "openai>=1.75.0",
+    "asyncpg>=0.29.0",
+    # Dependencies from preloop-sync
+    "click>=8.0.0",
+    "python-gitlab>=4.0.0",
+    "APScheduler>=3.0.0",
+    "pytz>=2025.2",
+    "jira>=3.8.0",
+    "cryptography>=49.0.0",  # ML-DSA and authenticated MDS path validation
+    "certifi>=2024.2.2",  # Independently distributed CA bundle for pinned MDS root
+    "firebase-admin>=6.0.0",  # For Android FCM push notifications
+    "litellm>=1.50.0",  # Provider-agnostic LLM calls for policy generation
+    "boto3>=1.34.0",  # For AWS Bedrock support through litellm
+    "fido2>=2.0",  # WebAuthn/FIDO2 step-up authentication
+    "jcs>=0.2",  # RFC 8785 JSON Canonicalization Scheme for RDT intent hash
+]
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+include = ["preloop", "preloop.*"]
+
+[project.scripts]
+preloop-sync = "preloop.sync.cli.commands:run"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.1",
+    "pytest-mock>=3.12.0",
+    "python-dotenv>=0.21.0", # Added python-dotenv
+    "black>=23.7.0",
+    "isort>=5.12.0",
+    "mypy>=1.5.1",
+    "pymdown-extensions>=10.0",
+    "pre-commit>=4.2.0",
+    "ruff>=0.11.3",
+    "httpx>=0.24.1",
+    "playwright>=1.30.0",
+    "pytest-playwright>=0.4.0",
+    "mcp>=1.0.0",  # MCP client for integration tests
+]
+ai-providers = [
+    "anthropic>=0.39.0",  # For Anthropic Claude API key validation
+    "google-generativeai>=0.8.0",  # For Google Gemini API key validation
+]
+push-notifications = [
+    "firebase-admin>=6.0.0",  # For Android FCM push notifications
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+explicit_package_bases = true
+namespace_packages = true
+mypy_path = "backend"
+exclude = ["backend/preloop/models/conftest.py"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+# Linting options
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "N", "W"]
+ignore = ["B008", "E501", "F841", "E741", "B904", "N805", "F821"]  # Ignore problematic rules for now
+extend-ignore = ["I001"]
+
+# Format configuration
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+testpaths = [
+    "backend/tests",
+]
+# Exclude scripts directory - contains manual test scripts, not unit tests
+norecursedirs = [
+    "backend/preloop/plugins/proprietary",
+    "plugins",
+    "scripts",
+]
+python_files = "test_*.py"
+python_functions = "test_*"
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: integration tests that require external services",
+    "mcp: tests that use Claude MCP tools",
+    "github: GitHub-specific tests",
+    "gitlab: GitLab-specific tests",
+    "jira: Jira-specific tests",
+    "yubikey: hardware integration tests requiring a physical FIDO2 USB key",
+]
+filterwarnings = [
+    # Ignore pytest asyncio marker on non-async functions (class-level pytestmark)
+    "ignore::pytest.PytestWarning",
+    # Ignore Pydantic V2 deprecation warnings (will fix in future migration)
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
+    # Ignore passlib crypt deprecation
+    "ignore:'crypt' is deprecated:DeprecationWarning",
+    # Ignore pythonjsonlogger move warning
+    "ignore:pythonjsonlogger.jsonlogger has been moved:DeprecationWarning",
+    # Ignore datetime.utcnow() deprecation (will fix in future cleanup)
+    "ignore:datetime.datetime.utcnow:DeprecationWarning",
+    # Ignore FastAPI duplicate operation ID warnings (caused by permission decorators)
+    "ignore:Duplicate Operation ID:UserWarning",
+    # Ignore coroutine never awaited in tests (mock issue)
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+]
+
+[tool.coverage.run]
+source = [
+    "preloop",
+]
+relative_files = true
+
+[tool.coverage.paths]
+source = [
+    "backend/preloop",
+]
+
+[tool.coverage.report]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]

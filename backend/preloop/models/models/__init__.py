@@ -55,6 +55,11 @@ from .oauth_mcp_token import (
     OAuthMCPRefreshToken,
 )
 from .budget import BudgetPolicy, BudgetSpendActivity, BudgetPeriod
+from .webauthn_credential import (
+    UserWebAuthnCredential,
+    WebAuthnChallengeSession,
+    WebAuthnRegistrationSession,
+)
 
 __all__ = [
     "Base",
@@ -128,4 +133,15 @@ __all__ = [
     "OAuthMCPAuthorizationCode",
     "OAuthMCPAccessToken",
     "OAuthMCPRefreshToken",
+    "UserWebAuthnCredential",
+    "WebAuthnChallengeSession",
+    "WebAuthnRegistrationSession",
+    "WorkshopSignupCode",
+    "WorkshopFeedback",
 ]
+
+# Core tables used by runtime atomic upserts must remain in migration metadata.
+from . import webauthn_rate_limit as webauthn_rate_limit
+from .workshop_customer import WorkshopCustomer as WorkshopCustomer
+from .workshop_signup_code import WorkshopSignupCode as WorkshopSignupCode
+from .workshop_feedback import WorkshopFeedback as WorkshopFeedback

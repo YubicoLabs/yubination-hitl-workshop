@@ -23,6 +23,7 @@
     "preview": "vite preview",
     "test": "web-test-runner \"src/**/*.test.{ts,js}\"",
     "test:coverage": "web-test-runner \"src/**/*.test.{ts,js}\" --coverage",
+    "test:workshop": "playwright test --config playwright.workshop.config.ts",
     "test:visual": "playwright test tests/visual/",
     "test:visual:update": "playwright test tests/visual/ --update-snapshots",
     "test:visual:ui": "playwright test tests/visual/ --ui",
@@ -33,7 +34,13 @@
     "docker:prod": "./docker-run.sh prod",
     "docker:mock": "./docker-run.sh mock",
     "docker:build": "./docker-run.sh build",
-    "docker:test": "./docker-run.sh test"
+    "docker:test": "./docker-run.sh test",
+    "predev": "node scripts/prepare-icons.mjs",
+    "prebuild": "node scripts/prepare-icons.mjs",
+    "test:icons": "python3 ../integrations/previewsign/scripts/generate_installation_facts.py --check && node --test scripts/prepare-icons.test.mjs && node scripts/prepare-icons.mjs",
+    "prebuild:watch": "node scripts/prepare-icons.mjs",
+    "test:pq-auth": "web-test-runner --config web-test-runner.config.mjs --files src/components/security-keys-manager.test.ts src/views/public/login-view.test.ts --tests-start-timeout 10000 --tests-finish-timeout 30000",
+    "test:security-layout": "playwright test --config playwright.security-layout.config.ts"
   },
   "dependencies": {
     "@sentry/browser": "^10.5.0",

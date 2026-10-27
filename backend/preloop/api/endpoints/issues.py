@@ -100,7 +100,7 @@ async def search_issues(
     ),
     search_type: str = Query(
         "fulltext",
-        enum=["fulltext", "similarity"],
+        json_schema_extra={"enum": ["fulltext", "similarity"]},
         description="Type of search to perform ('fulltext' or 'similarity')",
     ),
     status: Optional[str] = Query(None, description="Filter by issue status"),

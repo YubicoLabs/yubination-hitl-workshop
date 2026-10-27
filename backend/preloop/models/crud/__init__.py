@@ -1,5 +1,7 @@
 """CRUD operation implementations."""
 
+from . import workshop_feedback as workshop_feedback
+
 # Create CRUD instances for each model
 from ..models import (
     Account,
@@ -248,4 +250,5 @@ __all__ = [
     "CRUDBudgetSpendActivity",
     "crud_budget_policy",
     "crud_budget_spend",
+    "workshop_feedback",
 ]

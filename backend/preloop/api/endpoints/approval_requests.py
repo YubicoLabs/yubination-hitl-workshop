@@ -13,9 +13,11 @@ from preloop.models.db.session import get_async_db_session, get_db_session
 from preloop.models.models import ApprovalRequest
 from preloop.models.models.user import User
 from preloop.models.schemas.approval_request import (
-    ApprovalRequestResponse,
     ApprovalDecision,
+    ApprovalRequestResponse,
+    IntentHashVerificationResponse,
 )
+from preloop.services.rdt_intent import verify_intent_hash
 
 router = APIRouter(
     prefix="/approval-requests",
@@ -23,12 +25,20 @@ router = APIRouter(
 )
 
 
+def _same_account(left: uuid.UUID | str, right: uuid.UUID | str) -> bool:
+    """Compare ORM and serialized tenant IDs without accepting invalid identities."""
+    try:
+        return uuid.UUID(str(left)) == uuid.UUID(str(right))
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 @router.get("/{request_id}", response_model=ApprovalRequestResponse)
 def get_approval_request(
     request_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     db=Depends(get_db_session),
-) -> ApprovalRequest:
+) -> ApprovalRequestResponse:
     """Get an approval request by ID.
 
     Args:
@@ -50,7 +60,57 @@ def get_approval_request(
     if not approval_request:
         raise HTTPException(status_code=404, detail="Approval request not found")
 
-    return approval_request
+    response = ApprovalRequestResponse.model_validate(approval_request)
+
+    # Populate ARKG proof fields when step-up was completed via ARKG previewSign
+    if approval_request.arkg_step_up_verified:
+        if approval_request.arkg_step_up_signature:
+            response.arkg_step_up_signature_hex = (
+                approval_request.arkg_step_up_signature.hex()
+            )
+        if approval_request.arkg_step_up_derived_pk:
+            response.arkg_derived_pk_hex = bytes(
+                approval_request.arkg_step_up_derived_pk
+            ).hex()
+
+    return response
+
+
+@router.get(
+    "/{request_id}/verify-intent",
+    response_model=IntentHashVerificationResponse,
+)
+def verify_approval_intent(
+    request_id: uuid.UUID,
+    current_user: User = Depends(get_current_active_user),
+    db=Depends(get_db_session),
+) -> IntentHashVerificationResponse:
+    """Recompute the request's versioned Intent Hash for the current account."""
+    approval_request = crud_approval_request.get(
+        db, id=str(request_id), account_id=current_user.account_id
+    )
+    if approval_request is None:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+    if not approval_request.intent_hash_hex:
+        raise HTTPException(status_code=422, detail="Intent Hash is not available")
+
+    risk_tier = getattr(approval_request, "intent_risk_tier", None)
+    flags = getattr(approval_request, "intent_flags", None)
+    intact = verify_intent_hash(
+        approval_request.intent_hash_hex,
+        account_id=approval_request.account_id,
+        approval_request_id=approval_request.id,
+        tool_name=approval_request.tool_name,
+        tool_args=approval_request.tool_args or {},
+        requested_at=approval_request.requested_at,
+        intent_risk_tier=risk_tier,
+        intent_flags=flags,
+    )
+    return IntentHashVerificationResponse(
+        request_id=approval_request.id,
+        envelope_version=2 if risk_tier is not None else 1,
+        intent_intact=intact,
+    )
 
 
 @router.get("", response_model=list[ApprovalRequestResponse])
@@ -118,7 +178,7 @@ async def approve_request(
             raise HTTPException(status_code=404, detail="Approval request not found")
 
         # Check authorization
-        if approval_request.account_id != current_user.account_id:
+        if not _same_account(approval_request.account_id, current_user.account_id):
             raise HTTPException(
                 status_code=403, detail="Not authorized to approve this request"
             )
@@ -175,7 +235,7 @@ async def decline_request(
             raise HTTPException(status_code=404, detail="Approval request not found")
 
         # Check authorization
-        if approval_request.account_id != current_user.account_id:
+        if not _same_account(approval_request.account_id, current_user.account_id):
             raise HTTPException(
                 status_code=403, detail="Not authorized to decline this request"
             )
@@ -235,7 +295,7 @@ async def decide_request(
             raise HTTPException(status_code=404, detail="Approval request not found")
 
         # Check authorization
-        if approval_request.account_id != current_user.account_id:
+        if not _same_account(approval_request.account_id, current_user.account_id):
             raise HTTPException(
                 status_code=403, detail="Not authorized to decide on this request"
             )
@@ -263,3 +323,42 @@ async def decide_request(
         # Convert to Pydantic model while session is still open to avoid
         # DetachedInstanceError during response serialization.
         return ApprovalRequestResponse.model_validate(updated)
+
+
+@router.get("/{request_id}/rdt-envelope")
+def get_rdt_envelope(
+    request_id: uuid.UUID,
+    current_user: User = Depends(get_current_active_user),
+    db=Depends(get_db_session),
+) -> dict:
+    """Get the RDT envelope for an approved request (Phase A demo endpoint - READ ONLY).
+
+    Security: Changed from POST to GET to prevent tampering with audit trail.
+    The envelope is constructed and stored automatically during step-up completion.
+
+    Args:
+        request_id: Approval request ID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        RDT envelope dict or error
+
+    Raises:
+        HTTPException: If request not found or no envelope exists
+    """
+    # Get approval request
+    approval_request = crud_approval_request.get(
+        db, id=str(request_id), account_id=current_user.account_id
+    )
+
+    if not approval_request:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+
+    if not approval_request.rdt_envelope:
+        raise HTTPException(
+            status_code=404,
+            detail="No RDT envelope - request must complete step-up verification first",
+        )
+
+    return approval_request.rdt_envelope

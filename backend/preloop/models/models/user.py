@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String, text as sa_text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Boolean
@@ -82,6 +82,13 @@ class User(Base):
         String(255), nullable=True, comment="User's full name"
     )
 
+    pq_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_text("false")
+    )
+    pq_policy_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
     # Authentication
     hashed_password: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, comment="Hashed password (null for external auth)"
@@ -93,6 +100,13 @@ class User(Base):
         Boolean,
         default=False,
         comment="Whether the user has superuser/admin privileges",
+    )
+    require_mfa_login: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=sa_text("false"),
+        index=True,
+        comment="When true, user must complete WebAuthn ceremony after password verification",
     )
 
     # External authentication

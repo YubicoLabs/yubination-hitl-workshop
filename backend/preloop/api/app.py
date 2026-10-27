@@ -30,8 +30,13 @@ from preloop.api.endpoints import (
     account,
     agent_control,
     anthropic_gateway,
+    audit,
     audio,
     approval_requests,
+    webauthn_login,
+    pq_authentication,
+    webauthn_registration,
+    webauthn_stepup,
     comments,
     cost,
     features,
@@ -434,6 +439,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         logger.info("Skipping approval workflow repair pass for %s role.", service_role)
 
+    # Warm the FIDO MDS cache in a background thread so register_complete never
+    # blocks on the 20-second cold-start network fetch (ticket #18).
+    if not is_testing and is_api_role:
+        try:
+            from preloop.api.endpoints.webauthn_registration import (
+                _warm_mds_cache_background,
+            )
+
+            _warm_mds_cache_background()
+            logger.info("FIDO MDS cache warm-up started in background.")
+        except Exception as e:
+            logger.warning(f"FIDO MDS cache warm-up failed to start: {e}")
+
     yield
 
     # Shutdown logic
@@ -699,7 +717,7 @@ def create_app() -> FastAPI:
         )
 
         # Add security schemes and requirements
-        openapi_schema["components"]["securitySchemes"] = {
+        openapi_schema.setdefault("components", {})["securitySchemes"] = {
             "bearerAuth": {
                 "type": "http",
                 "scheme": "bearer",
@@ -784,6 +802,9 @@ def create_app() -> FastAPI:
 
         # Core API routers
         app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
+        from preloop.api.endpoints import workshop_feedback
+
+        app.include_router(workshop_feedback.router, prefix="/api/v1")
         app.include_router(
             account.router,
             prefix="/api/v1",
@@ -798,6 +819,9 @@ def create_app() -> FastAPI:
         app.include_router(
             public_approval.router, tags=["Public Approval"], include_in_schema=False
         )  # No auth required, mounted at /approval (not /api/v1/approval)
+        app.include_router(
+            webauthn_stepup.router, tags=["WebAuthn Step-Up"], include_in_schema=False
+        )  # No auth required, token-based, mounted at /approval
         app.include_router(
             features.router,
             prefix="/api/v1",
@@ -829,6 +853,11 @@ def create_app() -> FastAPI:
             prefix="/api/v1",
             tags=["Approval Requests"],
             dependencies=[Depends(get_current_active_user)],
+        )
+        app.include_router(
+            audit.router,
+            prefix="/api/v1",
+            tags=["Audit"],
         )
         app.include_router(
             notification_preferences.router,
@@ -891,6 +920,19 @@ def create_app() -> FastAPI:
             cost.router,
             prefix="/api/v1",
             tags=["Cost Analytics"],
+            dependencies=[Depends(get_current_active_user)],
+        )
+        app.include_router(pq_authentication.router, prefix="/api/v1")
+        app.include_router(
+            webauthn_login.router,
+            prefix="/api/v1",
+            tags=["WebAuthn Login"],
+            include_in_schema=False,
+        )  # Unauthenticated — issues JWTs after assertion verification
+        app.include_router(
+            webauthn_registration.router,
+            prefix="/api/v1",
+            tags=["WebAuthn"],
             dependencies=[Depends(get_current_active_user)],
         )
         # Public AI models endpoints (no auth required)

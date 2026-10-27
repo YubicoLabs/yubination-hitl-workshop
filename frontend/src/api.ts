@@ -72,15 +72,38 @@ export function extractErrorMessage(
 ): string {
   if (errorData && errorData.detail) {
     if (Array.isArray(errorData.detail)) {
-      return errorData.detail
-        .map((item: any) => item.msg || JSON.stringify(item))
-        .join(', ');
+      const messages = errorData.detail
+        .map((item: unknown) => {
+          if (
+            item &&
+            typeof item === 'object' &&
+            'msg' in item &&
+            typeof item.msg === 'string'
+          ) {
+            return item.msg;
+          }
+          return null;
+        })
+        .filter((message): message is string => message !== null);
+      return messages.length > 0 ? messages.join(', ') : defaultMessage;
     } else if (typeof errorData.detail === 'object') {
       return JSON.stringify(errorData.detail);
     }
     return String(errorData.detail);
   }
   return defaultMessage;
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | undefined = undefined,
+    readonly hasStructuredDetail = false
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 async function refreshToken(): Promise<string | null> {
@@ -1108,17 +1131,51 @@ export async function post(url: string, body: any) {
   if (!response.ok) {
     // Try to extract error detail from response body
     let errorMessage = `HTTP error! status: ${response.status}`;
+    let errorCode: string | undefined;
+    let hasStructuredDetail = false;
     try {
       const errorData = await response.json();
       if (errorData.detail) {
-        errorMessage = extractErrorMessage(errorData, errorMessage);
+        if (Array.isArray(errorData.detail)) {
+          const extractedMessage = extractErrorMessage(errorData, errorMessage);
+          hasStructuredDetail = extractedMessage === errorMessage;
+          errorMessage = extractedMessage;
+        } else if (typeof errorData.detail === 'object') {
+          hasStructuredDetail = true;
+          errorCode =
+            typeof errorData.detail.code === 'string'
+              ? errorData.detail.code
+              : undefined;
+          if (typeof errorData.detail.message === 'string') {
+            errorMessage = errorData.detail.message;
+          }
+        } else {
+          errorMessage = extractErrorMessage(errorData, errorMessage);
+        }
       }
     } catch (e) {
       // If JSON parsing fails, use the default error message
     }
-    throw new Error(errorMessage);
+    throw new ApiError(
+      errorMessage,
+      response.status,
+      errorCode,
+      hasStructuredDetail
+    );
   }
   return response.json();
+}
+
+export function acceptWebAuthnSession(data: {
+  access_token: string;
+  refresh_token?: string;
+}): void {
+  localStorage.setItem('accessToken', data.access_token);
+  if (data.refresh_token)
+    localStorage.setItem('refreshToken', data.refresh_token);
+  window.dispatchEvent(
+    new CustomEvent('auth-change', { bubbles: true, composed: true })
+  );
 }
 
 export async function detectIssueDependencies(
@@ -1174,10 +1231,26 @@ export async function commitIssueDependencies(
 }
 
 // Account
+export class ProfileRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly isCurrentCredential: () => boolean
+  ) {
+    super('Failed to fetch user profile');
+  }
+}
+
 export async function getUserProfile() {
-  const response = await fetchWithAuth('/api/v1/auth/users/me');
+  const options: RequestInit = {};
+  const response = await fetchWithAuth('/api/v1/auth/users/me', options);
   if (!response.ok) {
-    throw new Error('Failed to fetch user profile');
+    // The transport updates these headers when it refreshes and retries. Keep
+    // credential correlation in a closure, never in a loggable error field.
+    const attempted = new Headers(options.headers).get('Authorization');
+    throw new ProfileRequestError(response.status, () => {
+      const current = localStorage.getItem('accessToken');
+      return !!current && attempted === `Bearer ${current}`;
+    });
   }
   return response.json();
 }
@@ -2812,6 +2885,7 @@ export async function removeUserRole(
 
 // Features API
 export interface FeaturesResponse {
+  workshop?: { source_repository_url: string };
   plugins: Array<{
     name: string;
     version: string;
@@ -3078,4 +3152,233 @@ export async function deleteBudgetPolicy(id: string): Promise<void> {
     method: 'DELETE',
   });
   if (!response.ok) throw new Error('Failed to delete budget policy');
+}
+
+// ---------------------------------------------------------------------------
+// WebAuthn security key management
+// ---------------------------------------------------------------------------
+
+export interface WebAuthnCredential {
+  /** Client-reported credProps.rk; missing evidence remains unknown. */
+  discoverable?: boolean | null;
+  /** WebAuthn credential ID; `id` is the RP's internal database record ID. */
+  credential_id?: string;
+  replaced_credential_id?: string | null;
+  authentication_tested_at?: string | null;
+  pq_eligible?: boolean;
+  cose_algorithm?: number | null;
+  id: string;
+  name: string;
+  aaguid: string;
+  created_at: string;
+  last_used_at: string | null;
+  arkg_capable: boolean;
+  backup_eligible: boolean | null;
+  backup_state: boolean | null;
+}
+
+export interface MdsInfo {
+  previewsign_supported?: boolean;
+  previewsign_vendor_catalog_supported?: boolean;
+  previewsign_workshop_assumption?: boolean;
+  /** False only for current verified metadata listing known classical algorithms. */
+  pq_upgrade_supported?: false | null;
+  metadata_status?: string;
+  metadata_authenticated?: boolean;
+  attestation_verified?: boolean;
+  found: boolean;
+  description: string | null;
+  icon: string | null;
+  key_protection: string[];
+  attachment_hint: string[];
+  user_verification_methods: string[];
+  protocol_family: string | null;
+  certification_status: string | null;
+}
+
+export async function getWebAuthnMdsInfo(aaguidUuid: string): Promise<MdsInfo> {
+  const response = await fetchWithAuth(`/api/v1/webauthn/mds/${aaguidUuid}`);
+  if (!response.ok) throw new Error(`MDS lookup failed: ${response.status}`);
+  return response.json();
+}
+
+export async function listWebAuthnCredentials(): Promise<WebAuthnCredential[]> {
+  const response = await fetchWithAuth('/api/v1/webauthn/credentials');
+  if (!response.ok) throw new Error('Failed to load passkeys');
+  return response.json();
+}
+
+export async function deleteWebAuthnCredential(id: string): Promise<void> {
+  const response = await fetchWithAuth(`/api/v1/webauthn/credentials/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete security key');
+}
+
+export async function renameWebAuthnCredential(
+  id: string,
+  name: string
+): Promise<WebAuthnCredential> {
+  const response = await fetchWithAuth(
+    `/api/v1/webauthn/credentials/${id}/rename`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }
+  );
+  if (!response.ok) throw new Error('Failed to rename security key');
+  return response.json();
+}
+
+export async function webauthnRegisterBegin(
+  name: string,
+  algorithm?: 'mldsa44',
+  authorizationId?: string
+): Promise<{
+  session_id: string;
+  options: Record<string, unknown>;
+}> {
+  const response = await fetchWithAuth('/api/v1/webauthn/register/begin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      ...(algorithm ? { algorithm } : {}),
+      ...(authorizationId ? { authorization_id: authorizationId } : {}),
+    }),
+  });
+  if (!response.ok)
+    throw new Error('Failed to start security key registration');
+  return response.json();
+}
+
+export async function webauthnRegisterComplete(
+  sessionId: string,
+  name: string,
+  credentialResponse: Record<string, unknown>,
+  arkgSeedPubB64?: string,
+  arkgSeedKhB64?: string
+): Promise<WebAuthnCredential> {
+  const response = await fetchWithAuth('/api/v1/webauthn/register/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: sessionId,
+      name,
+      response: credentialResponse,
+      ...(arkgSeedPubB64
+        ? { arkg_seed_pub_b64: arkgSeedPubB64, arkg_seed_kh_b64: arkgSeedKhB64 }
+        : {}),
+    }),
+  });
+  if (!response.ok)
+    throw new Error('Failed to complete security key registration');
+  return response.json();
+}
+
+export interface PqPolicy {
+  enabled: boolean;
+  version: number;
+  eligible_count: number;
+  tested_count: number;
+  ready: boolean;
+  warning: string | null;
+  authorization_id?: string;
+  credentials: {
+    id: string;
+    cose_algorithm: number | null;
+    eligible: boolean;
+    authentication_tested_at: string | null;
+  }[];
+}
+
+export async function getPqPolicy(): Promise<PqPolicy> {
+  const response = await fetchWithAuth('/api/v1/webauthn/pq-policy');
+  if (!response.ok)
+    throw new Error('Could not load post-quantum sign-in settings.');
+  return response.json();
+}
+
+export async function confirmPqAction(body: {
+  action: 'enable' | 'disable' | 'enroll' | 'remove' | 'test';
+  version: number;
+  credential_id?: string;
+  emergency?: boolean;
+  consent?: boolean;
+}): Promise<PqPolicy> {
+  async function request(path: string, data: unknown) {
+    const response = await fetchWithAuth(`/api/v1/webauthn/pq-policy/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await response.json();
+    if (!response.ok)
+      throw new Error(
+        typeof result.detail === 'string'
+          ? result.detail
+          : 'Passkey confirmation failed. Refresh settings and try again.'
+      );
+    return result;
+  }
+  const { session_id, options } = await request('begin', body);
+  const decode = (value: string): Uint8Array =>
+    Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
+      c.charCodeAt(0)
+    );
+  const encode = (value: ArrayBuffer): string =>
+    btoa(String.fromCharCode(...new Uint8Array(value)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+  const credential = (await navigator.credentials.get({
+    publicKey: {
+      ...options,
+      challenge: decode(options.challenge),
+      allowCredentials: options.allowCredentials?.map(
+        (entry: { id: string; type: string }) => ({
+          ...entry,
+          id: decode(entry.id),
+        })
+      ),
+    },
+  })) as PublicKeyCredential | null;
+  if (!credential)
+    throw new Error('Passkey confirmation was cancelled. Nothing changed.');
+  const assertion = credential.response as AuthenticatorAssertionResponse;
+  return request('complete', {
+    session_id,
+    response: {
+      id: credential.id,
+      rawId: encode(credential.rawId),
+      type: credential.type,
+      response: {
+        clientDataJSON: encode(assertion.clientDataJSON),
+        authenticatorData: encode(assertion.authenticatorData),
+        signature: encode(assertion.signature),
+        userHandle: assertion.userHandle ? encode(assertion.userHandle) : null,
+      },
+    },
+  });
+}
+
+export interface RegistrationEvidenceResult {
+  available: boolean;
+  evidence: null | {
+    schema_version: number;
+    registered_at: string;
+    request: Record<string, unknown>;
+    response: Record<string, unknown>;
+    verification: Record<string, unknown>;
+  };
+}
+export async function getRegistrationEvidence(
+  id: string
+): Promise<RegistrationEvidenceResult> {
+  const response = await fetchWithAuth(
+    `/api/v1/webauthn/credentials/${encodeURIComponent(id)}/registration-evidence`
+  );
+  if (!response.ok) throw new Error('Registration details could not be loaded');
+  return response.json();
 }

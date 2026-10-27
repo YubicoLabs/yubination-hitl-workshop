@@ -296,14 +296,25 @@ export class StaticView extends LitElement {
       }
       const text = await response.text();
 
-      // Check if the file is HTML or markdown based on extension
-      if (this.src.endsWith('.html')) {
-        // HTML file - use as-is
-        this.content = text;
-      } else {
-        // Markdown file - parse with marked
-        this.content = marked(text) as string;
+      const content = this.src.endsWith('.html')
+        ? text
+        : (marked(text) as string);
+      // Inspect rendered markup so fenced/escaped HTML examples remain valid.
+      // This is a response-shape guard, not a general HTML sanitizer.
+      const template = document.createElement('template');
+      template.innerHTML = content;
+      const documentMarkup = content.replace(/<!--[^]*?-->/g, '');
+      if (
+        /<!doctype\s+html\b|<\/?(?:html|head|body)(?:\s|>)/i.test(
+          documentMarkup
+        ) ||
+        template.content.querySelector('lit-app')
+      ) {
+        throw new Error(
+          'Expected static content, received an HTML application document'
+        );
       }
+      this.content = content;
     } catch (error: any) {
       console.error('Error fetching static content:', error);
       this.error = 'There was an issue fetching the content.';

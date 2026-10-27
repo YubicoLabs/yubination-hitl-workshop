@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Set Security Key PIN</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    padding: 20px;
+  }
+  .dialog { width: 100%; max-width: 360px; }
+  h1 { font-size: 16px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; }
+  .message { font-size: 13px; color: #555; margin-bottom: 16px; }
+  .error { font-size: 13px; color: #cc0000; margin-bottom: 12px; display: none; }
+  label {
+    display: block;
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 4px;
+  }
+  input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    outline: none;
+    margin-bottom: 12px;
+    -webkit-text-security: disc;
+  }
+  input[type="password"]:focus { border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0,102,204,0.2); }
+  .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+  button {
+    padding: 8px 16px;
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: none;
+  }
+  .cancel { background: #f0f0f0; color: #333; border: 1px solid #ccc; }
+  .ok { background: #0066cc; color: #fff; font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="dialog">
+  <h1>Set Security Key PIN</h1>
+  <div class="message" id="message">Create a PIN for your security key.</div>
+  <div class="error" id="error"></div>
+  <label for="pin1">New PIN</label>
+  <input type="password" id="pin1" autocomplete="off" placeholder="Enter new PIN">
+  <label for="pin2">Confirm PIN</label>
+  <input type="password" id="pin2" autocomplete="off" placeholder="Confirm new PIN">
+  <div class="buttons">
+    <button class="cancel" id="cancelBtn">Cancel</button>
+    <button class="ok" id="okBtn">Set PIN</button>
+  </div>
+</div>
+<script src="pin-setup.js"></script>
+</body>
+</html>

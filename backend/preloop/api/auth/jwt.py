@@ -24,6 +24,8 @@ from preloop.models.crud import (
     crud_runtime_session,
     crud_user,
 )
+from sqlalchemy import inspect as inspect_orm
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 # Configuration
@@ -361,6 +363,34 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db_session),
 ) -> User:
+    """Resolve identity without retaining a pool slot for endpoint scheduling.
+
+    Authentication finishes its database unit before a synchronous endpoint needs
+    another worker slot. The returned identity contains loaded scalar attributes;
+    endpoint database operations use their own subsequent session transaction.
+    """
+    try:
+        user = _authenticate_current_user(token, db)
+        state = inspect_orm(user, raiseerr=False)
+        if state is not None:
+            # API-key last-used commits may expire the User; materialize before
+            # detaching so response serialization never implicitly checks out.
+            for attribute in state.mapper.column_attrs:
+                getattr(user, attribute.key)
+            db.expunge(user)
+        return user
+    except SQLAlchemyError as exc:
+        logger.error("Authentication database unavailable (%s)", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+            headers={"Retry-After": "1"},
+        ) from None
+    finally:
+        db.close()
+
+
+def _authenticate_current_user(token: str, db: Session) -> User:
     """Get the current user from a JWT token or API key.
 
     Args:
@@ -400,6 +430,8 @@ def get_current_user(
                 return user  # Return the full User object
         except HTTPException:
             # Re-raise HTTP exceptions
+            raise
+        except SQLAlchemyError:
             raise
         except Exception as e:
             logger.error(f"Error in API key first-try authentication: {str(e)}")
@@ -462,6 +494,8 @@ def get_current_user(
             return user  # Return the full User object
         except HTTPException:
             raise
+        except SQLAlchemyError:
+            raise
         except Exception as e:
             logger.error(f"Error getting current user from JWT: {str(e)}")
             raise HTTPException(
@@ -506,6 +540,8 @@ def get_current_user(
                 return user  # Return the full User object
             except HTTPException:
                 # Re-raise HTTP exceptions
+                raise
+            except SQLAlchemyError:
                 raise
             except Exception as e:
                 logger.error(f"Error authenticating with API key: {str(e)}")
@@ -559,8 +595,10 @@ def get_current_active_user_optional(
         if user and user.is_active:
             return user
         return None
-    except HTTPException:
-        # Any authentication error (invalid, expired, etc.) should result in None
+    except HTTPException as exc:
+        if exc.status_code >= 500:
+            raise
+        # Invalid or absent credentials remain an anonymous optional identity.
         return None
     except JWTError as e:
         logger.debug(
@@ -573,6 +611,10 @@ def get_current_active_user_optional(
 
 
 async def get_user_from_token_if_valid(token: str, db_session: Any) -> Optional[User]:
+    return _get_user_from_token_if_valid_sync(token, db_session)
+
+
+def _get_user_from_token_if_valid_sync(token: str, db_session: Any) -> Optional[User]:
     """
     Manually attempts to retrieve a user from a token string.
     Returns None if the token is invalid, expired, or the user doesn't exist.
@@ -615,3 +657,23 @@ async def get_user_from_token_if_valid(token: str, db_session: Any) -> Optional[
         logger.warning("Unexpected error in get_user_from_token_if_valid: %s", e)
 
     return None
+
+
+async def get_detached_socket_user(token: str) -> Optional[User]:
+    """Authenticate a socket without blocking the loop or sharing a DB session."""
+    from starlette.concurrency import run_in_threadpool
+    from preloop.models.db.session import get_session_factory
+
+    def lookup():
+        db = get_session_factory()()
+        try:
+            user = _get_user_from_token_if_valid_sync(token, db)
+            if user is not None:
+                # Explicitly materialize the fields used by socket identity payloads.
+                _ = user.id, user.account_id, user.username, user.email, user.is_active
+                db.expunge(user)
+            return user
+        finally:
+            db.close()
+
+    return await run_in_threadpool(lookup)

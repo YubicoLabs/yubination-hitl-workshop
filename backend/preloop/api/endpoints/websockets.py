@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy.orm import Session
 
-from preloop.api.auth import get_user_from_token_if_valid
+from preloop.api.auth.jwt import get_detached_socket_user
 from preloop.services.websocket_manager import manager
 from preloop.services.session_manager import session_manager
 from preloop.services.activity_tracker import handle_activity
@@ -15,6 +15,12 @@ from preloop.sync.services.event_bus import EventBus
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _release_idle_connection(db: Session) -> None:
+    """Keep loaded identity snapshots while releasing the socket transaction."""
+    db.expunge_all()
+    db.close()
 
 
 @router.websocket("/ws")
@@ -81,6 +87,7 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)
 
     try:
         while True:
+            _release_idle_connection(db)
             # Wait for a message from the client (e.g., a pong response)
             # Set a timeout to detect unresponsive clients.
             try:
@@ -175,7 +182,7 @@ async def flow_execution_websocket(
         token = websocket.query_params.get("token")
         if token:
             # Validate token and get user
-            user = await get_user_from_token_if_valid(token, db)
+            user = await get_detached_socket_user(token)
             if not user:
                 logger.warning(
                     f"Invalid token for WebSocket connection to execution {execution_id}"
@@ -217,6 +224,8 @@ async def flow_execution_websocket(
         f"WebSocket authorized for user {user.username} to access execution {execution_id}"
     )
 
+    _release_idle_connection(db)
+
     # Connect to NATS event bus
     event_bus = EventBus()
     nats_sub = None
@@ -250,6 +259,7 @@ async def flow_execution_websocket(
 
         # Listen for commands from WebSocket client
         while True:
+            _release_idle_connection(db)
             try:
                 data = await websocket.receive_json()
 
@@ -388,6 +398,7 @@ async def unified_websocket(websocket: WebSocket, db: Session = Depends(get_db))
 
         # Message loop
         while True:
+            _release_idle_connection(db)
             try:
                 # Wait for message with timeout for heartbeat
                 # Use receive_text() instead of receive_json() to handle non-JSON messages
@@ -424,7 +435,7 @@ async def unified_websocket(websocket: WebSocket, db: Session = Depends(get_db))
                         continue
 
                     # Validate token
-                    auth_user = await get_user_from_token_if_valid(token, db)
+                    auth_user = await get_detached_socket_user(token)
                     if not auth_user:
                         await websocket.send_json(
                             {"type": "auth_error", "error": "Invalid or expired token"}
@@ -432,8 +443,16 @@ async def unified_websocket(websocket: WebSocket, db: Session = Depends(get_db))
                         continue
 
                     # Upgrade session to authenticated
-                    session_manager.upgrade_session(session.id, auth_user, db)
+                    await session_manager.upgrade_session(session.id, auth_user, db)
                     user = auth_user  # Update local reference
+                    # Load identity fields before detaching the committed ORM user.
+                    auth_payload = {
+                        "id": str(user.id),
+                        "username": user.username,
+                        "email": user.email,
+                    }
+                    account_id = str(user.account_id)
+                    _release_idle_connection(db)
 
                     # Re-register with manager for account-based broadcasts
                     subscribed_topics = (
@@ -451,7 +470,7 @@ async def unified_websocket(websocket: WebSocket, db: Session = Depends(get_db))
 
                     # Register with account filtering for broadcast messages
                     manager_connection_id = await manager.connect_with_account(
-                        websocket, str(user.account_id)
+                        websocket, account_id
                     )
                     for topic in subscribed_topics:
                         manager.subscribe(manager_connection_id, topic)
@@ -459,11 +478,7 @@ async def unified_websocket(websocket: WebSocket, db: Session = Depends(get_db))
                     await websocket.send_json(
                         {
                             "type": "authenticated",
-                            "user": {
-                                "id": str(user.id),
-                                "username": user.username,
-                                "email": user.email,
-                            },
+                            "user": auth_payload,
                         }
                     )
                     logger.info(

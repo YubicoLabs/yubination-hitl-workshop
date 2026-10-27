@@ -141,6 +141,7 @@ export type BrandEdition = 'saas' | 'selfhosted';
 
 // Runtime config - minimal metadata injected into window.BRAND_CONFIG
 export interface BrandRuntimeConfig {
+  workshop?: boolean;
   name: string;
   domain: string;
   edition: BrandEdition; // 'saas' = full marketing site, 'selfhosted' = minimal login-focused

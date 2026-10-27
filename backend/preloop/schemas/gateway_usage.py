@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from preloop.schemas.enrollment_metadata import project_enrollment_request
 
 
 class GatewayTokenUsage(BaseModel):
@@ -342,7 +344,12 @@ class ManagedAgentCredentialCreateResponse(BaseModel):
 
 
 class ManagedAgentEnrollmentSummary(BaseModel):
-    """Durable enrollment state for one managed agent."""
+    """Durable metadata for one managed agent.
+
+    New writes discard legacy snapshots, backup metadata and target paths.
+    Untouched historical records remain readable. Readiness flags are finite
+    client assertions, not proof of connectivity or authorization.
+    """
 
     id: str
     created_by_user_id: Optional[str] = None
@@ -362,8 +369,20 @@ class ManagedAgentEnrollmentSummary(BaseModel):
     updated_at: datetime
 
 
-class ManagedAgentEnrollmentCreateRequest(BaseModel):
-    """Request to persist an enrollment record for one managed agent."""
+class _EnrollmentMetadataRequest(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def project_metadata(cls, value: Any) -> dict[str, Any]:
+        return project_enrollment_request(value)
+
+
+class ManagedAgentEnrollmentCreateRequest(_EnrollmentMetadataRequest):
+    """Create finite enrollment metadata for one managed agent.
+
+    Legacy snapshots and paths are accepted but discarded before persistence.
+    Only strict readiness booleans and supported states survive; these are
+    client assertions, not proof of connectivity or authorization.
+    """
 
     enrollment_type: str = Field(..., min_length=1, max_length=64)
     adapter_key: Optional[str] = Field(default=None, max_length=64)
@@ -379,15 +398,23 @@ class ManagedAgentEnrollmentCreateRequest(BaseModel):
     last_restored_at: Optional[datetime] = None
 
 
-class ManagedAgentEnrollmentValidateRequest(BaseModel):
-    """Request to update validation state for one enrollment."""
+class ManagedAgentEnrollmentValidateRequest(_EnrollmentMetadataRequest):
+    """Update finite client assertions for one enrollment.
+
+    Unknown metadata and invalid assertion types are discarded. Readiness
+    assertions do not establish connectivity or authorization.
+    """
 
     status: str = Field(default="validated", min_length=1, max_length=32)
     validation_result: dict = Field(default_factory=dict)
 
 
-class ManagedAgentEnrollmentRestoreRequest(BaseModel):
-    """Request to mark one enrollment as restored."""
+class ManagedAgentEnrollmentRestoreRequest(_EnrollmentMetadataRequest):
+    """Mark an enrollment restored without uploading its local backup.
+
+    Legacy backup metadata is discarded. Validation retains only finite client
+    assertions, not proof of connectivity, restoration or authorization.
+    """
 
     status: str = Field(default="restored", min_length=1, max_length=32)
     backup_metadata: dict = Field(default_factory=dict)

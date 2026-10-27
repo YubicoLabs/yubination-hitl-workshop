@@ -3,6 +3,7 @@
 import logging
 import secrets
 import string
+import uuid as stdlib_uuid
 from datetime import datetime, timedelta, UTC
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -30,6 +31,7 @@ from preloop.api.auth.jwt import (
     verify_password,
 )
 from preloop.config import settings
+from preloop.services import workshop_signup_codes
 from preloop.schemas.auth import (
     ApiKeyCreate,
     ApiKeyResponse,
@@ -72,6 +74,7 @@ from preloop.models.crud import (
     crud_runtime_session,
     crud_user_role,
 )
+from preloop.models.crud.webauthn_credential import crud_webauthn_credential
 from preloop.models.db.session import get_db_session
 from preloop.models.models.user import User as UserModel
 from preloop.models.models.api_key import ApiKey
@@ -382,6 +385,16 @@ async def register(
             detail="Registration is disabled. Please contact an administrator for an invitation.",
         )
 
+    if settings.workshop_signup_code_required and not workshop_signup_codes.is_valid(
+        db, code=user_data.workshop_code
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This workshop code isn't valid. Check it or ask a facilitator "
+                "for another code."
+            ),
+        )
     logger.info(f"[REGISTER] Starting registration for username: {user_data.username}")
 
     # Check if username or email already exists
@@ -491,12 +504,17 @@ async def register(
         logger.info("[REGISTER] Account setup tasks scheduled")
 
         logger.info("[REGISTER] Registration complete, returning response")
-        return {
+        response = {
             "username": new_user.username,
             "email": new_user.email,
             "full_name": new_user.full_name,
             "email_verified": new_user.email_verified,
         }
+        # Refresh opened a read transaction. Release it before BackgroundTasks
+        # start; dependency teardown may otherwise hold a pooled connection
+        # throughout provisioning. Task arguments and response are scalars now.
+        session.close()
+        return response
     except IntegrityError:
         session.rollback()
         raise HTTPException(
@@ -647,6 +665,54 @@ async def reset_password(
         )
 
 
+def _pq_password_challenge(db: Session, user: Any) -> Any:
+    """Password success alone never issues tokens for an opted-in user."""
+    from fastapi.responses import JSONResponse
+    from fido2.webauthn import UserVerificationRequirement
+    from preloop.api.endpoints._webauthn_utils import (
+        acd_from_stored,
+        auth_options_to_dict,
+    )
+    from preloop.api.endpoints.webauthn_registration import fido2_server
+    from preloop.services.pq_authentication import eligible
+
+    credentials = crud_webauthn_credential.list_by_user(
+        db, user_id=user.id, account_id=user.account_id
+    )
+    credentials = [c for c in credentials if eligible(c)]
+    if not settings.webauthn_login_enabled or not credentials:
+        raise HTTPException(
+            403,
+            "A post-quantum passkey is required. No eligible sign-in method is available.",
+        )
+    options, state = fido2_server.authenticate_begin(
+        credentials=[
+            acd_from_stored(c.credential_id, c.public_key_cbor, c.aaguid)
+            for c in credentials
+        ],
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    session_id = stdlib_uuid.uuid4()
+    crud_webauthn_credential.create_login_session(
+        db,
+        session_id=session_id,
+        state_dict=dict(state),
+        challenge=bytes(options.public_key.challenge),
+        kind="2fa",
+        user_id=user.id,
+        account_id=user.account_id,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "mfa_required": True,
+            "pq_required": True,
+            "webauthn_session_id": str(session_id),
+            "options": auth_options_to_dict(options),
+        },
+    )
+
+
 @router.post("/token", response_model=Token)
 async def login_form(
     request: Request,
@@ -675,6 +741,14 @@ async def login_form(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    user = crud_webauthn_credential.lock_user(
+        db, user_id=user.id, account_id=user.account_id
+    )
+    if user is None or not user.is_active:
+        raise HTTPException(401, "Authentication failed")
+    if user.pq_only is True:
+        return _pq_password_challenge(db, user)
+
     # Create access token with user information
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -697,24 +771,41 @@ async def login_form(
     }
 
 
-@router.post("/token/json", response_model=Token)
+class MfaRequiredResponse(BaseModel):
+    """Returned when the user has WebAuthn credentials registered.
+
+    The client should call POST /api/v1/webauthn/login/begin (with the username
+    pre-filled) then POST /api/v1/webauthn/login/complete to obtain a JWT.
+    """
+
+    mfa_required: bool = True
+    webauthn_session_id: str
+
+
+@router.post("/token/json")
 async def login_json(
     http_request: Request,
     request: LoginRequest,
     db: Session = Depends(get_db_session),
-) -> Dict[str, str]:
+) -> Any:
     """Login to get an access token using JSON data.
+
+    When the user has WebAuthn credentials registered, returns HTTP 202 with
+    ``mfa_required: true`` and a ``webauthn_session_id`` to use in the passkey
+    ceremony instead of issuing a JWT immediately.
 
     Args:
         http_request: The incoming HTTP request object.
         request: Login request with username and password.
 
     Returns:
-        Access token.
+        Access token (200) or MFA challenge (202).
 
     Raises:
         HTTPException: If the username or password is incorrect.
     """
+    from fastapi.responses import JSONResponse
+
     user = await authenticate_user(
         request.username, request.password, source_ip=get_client_ip(http_request), db=db
     )
@@ -725,15 +816,77 @@ async def login_json(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Create access token with user information
+    user = crud_webauthn_credential.lock_user(
+        db, user_id=user.id, account_id=user.account_id
+    )
+    if user is None or not user.is_active:
+        raise HTTPException(401, "Authentication failed")
+    if user.pq_only is True:
+        return _pq_password_challenge(db, user)
+
+    # MFA gate: require WebAuthn step-up after password login only when BOTH
+    # webauthn_login_enabled AND webauthn_mfa_required are true.
+    # webauthn_login_enabled alone only enables the passkey sign-in button;
+    # it does not mandate MFA for password-based login.
+    if (
+        settings.webauthn_login_enabled
+        and settings.webauthn_mfa_required
+        and crud_webauthn_credential.account_has_credential(
+            db, account_id=user.account_id
+        )
+    ):
+        # Check specifically for this user's credentials (not just any account credential)
+        user_creds = crud_webauthn_credential.list_by_user(
+            db, user_id=user.id, account_id=user.account_id
+        )
+        if user_creds:
+            from preloop.api.endpoints._webauthn_utils import acd_from_stored
+            from preloop.api.endpoints.webauthn_registration import fido2_server
+            from fido2.webauthn import UserVerificationRequirement
+
+            acd_list = []
+            for c in user_creds:
+                try:
+                    acd = acd_from_stored(c.credential_id, c.public_key_cbor, c.aaguid)
+                    acd_list.append(acd)
+                except Exception:
+                    pass
+
+            from preloop.api.endpoints._webauthn_utils import auth_options_to_dict
+
+            options, state = fido2_server.authenticate_begin(
+                credentials=acd_list if acd_list else None,
+                user_verification=UserVerificationRequirement.REQUIRED,
+            )
+
+            session_id = stdlib_uuid.uuid4()
+            crud_webauthn_credential.create_login_session(
+                db,
+                session_id=session_id,
+                state_dict=dict(state),
+                challenge=bytes(options.public_key.challenge),
+                kind="2fa",
+                user_id=user.id,
+                account_id=user.account_id,
+            )
+
+            return JSONResponse(
+                status_code=status.HTTP_202_ACCEPTED,
+                content={
+                    "mfa_required": True,
+                    "webauthn_session_id": str(session_id),
+                    "options": auth_options_to_dict(options),
+                },
+            )
+
+    # No WebAuthn credentials — issue JWT immediately (passkey-less path)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": str(user.id), "scopes": []},
         expires_delta=access_token_expires,
     )
 
-    # Create refresh token with longer expiration
-    refresh_token_expires = timedelta(days=7)  # 7 days
+    refresh_token_expires = timedelta(days=7)
     refresh_token = create_access_token(
         data={"sub": str(user.id), "scopes": [], "refresh": True},
         expires_delta=refresh_token_expires,
@@ -743,7 +896,7 @@ async def login_json(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # in seconds
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
 
 

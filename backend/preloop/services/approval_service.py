@@ -1,6 +1,7 @@
 """Service for managing approval requests and webhook posting."""
 
 import asyncio
+import copy
 import concurrent.futures
 import json
 import uuid
@@ -10,6 +11,7 @@ from typing import Optional, Dict, Any, List, Set
 from urllib.parse import urljoin
 
 import httpx
+from fastapi import HTTPException, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from preloop.models.models import ApprovalRequest, ApprovalWorkflow
@@ -19,6 +21,12 @@ from preloop.models.schemas.approval_request import (
 from preloop.models.crud.approval_request import (
     get_approval_request_async,
     get_approval_request_for_update_async,
+)
+from preloop.models.crud.approval_workflow import (
+    is_user_authorized_approver_async,
+)
+from preloop.models.crud.webauthn_credential import (
+    get_webauthn_credential_owner_async,
 )
 from preloop.sync.services.event_bus import get_task_publisher
 from preloop.services.ai_approval_service import get_ai_approval_service
@@ -295,6 +303,9 @@ class ApprovalService:
         agent_reasoning: Optional[str] = None,
         execution_id: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
+        step_up_required: bool = False,
+        intent_result=None,  # Optional[IntentVerificationResult] — avoid circular import
+        server_recorded_context: Optional[Dict[str, Any]] = None,
     ) -> ApprovalRequest:
         """Create a new approval request.
 
@@ -315,19 +326,76 @@ class ApprovalService:
         timeout = timeout_seconds or 300  # Default: 5 minutes
         expires_at = datetime.utcnow() + timedelta(seconds=timeout)
 
+        request_id = uuid.uuid4()
+        requested_at = datetime.utcnow()
+
+        # Compute tamper-evident intent hash before persisting
+        from preloop.services.rdt_intent import compute_intent_hash
+
+        # Use v=2 envelope when the intent verifier produced a risk tier so the
+        # hardware signature commits to the assessed risk, not just the operation.
+        _risk_tier = intent_result.risk_tier if intent_result else None
+        _flags = intent_result.flags if intent_result else None
+
+        intent_hash = compute_intent_hash(
+            account_id=uuid.UUID(str(account_id)),
+            approval_request_id=request_id,
+            tool_name=tool_name,
+            tool_args=tool_args or {},
+            requested_at=requested_at,
+            intent_risk_tier=_risk_tier,
+            intent_flags=_flags,
+        )
+
         # Create approval request
+        if server_recorded_context is not None:
+            server_recorded_context = copy.deepcopy(server_recorded_context)
+            server_recorded_context["purpose"] = {
+                "status": "supplied" if agent_reasoning else "not_supplied",
+                "source": "caller_supplied_reasoning" if agent_reasoning else None,
+                "text": agent_reasoning or None,
+                "verified": False,
+            }
+            server_recorded_context["expires_at"] = (
+                expires_at.isoformat() if expires_at else None
+            )
+
         approval_request = ApprovalRequest(
-            id=uuid.uuid4(),
+            id=request_id,
             account_id=account_id,
             tool_configuration_id=tool_configuration_id,
             approval_workflow_id=approval_workflow_id,
             execution_id=execution_id,
             tool_name=tool_name,
             tool_args=tool_args,
+            server_recorded_context=copy.deepcopy(server_recorded_context),
             agent_reasoning=agent_reasoning,
             status="pending",
-            requested_at=datetime.utcnow(),
+            requested_at=requested_at,
             expires_at=expires_at,
+            intent_hash_hex=intent_hash,
+            step_up_required=step_up_required,
+            action_class="write",  # Phase A: default to 'write'; Phase B: AI classification
+            # Intent verifier result fields
+            intent_verified=bool(intent_result and intent_result.verified),
+            intent_risk_tier=_risk_tier,
+            intent_step_up_override=intent_result.step_up_override
+            if intent_result
+            else None,
+            intent_description_match_score=(
+                intent_result.description_match_score
+                if intent_result
+                and intent_result.verified
+                and intent_result.model_used != "rule_based"
+                else None
+            ),
+            intent_flags=_flags or None,
+            intent_reasoning=intent_result.reasoning
+            if intent_result and intent_result.reasoning
+            else None,
+            intent_model=intent_result.model_used if intent_result else None,
+            intent_verified_at=requested_at if intent_result else None,
+            intent_latency_ms=intent_result.latency_ms if intent_result else None,
         )
 
         self.db.add(approval_request)
@@ -424,6 +492,58 @@ class ApprovalService:
 
         return approval_request
 
+    async def _authorize_decision_actor(
+        self,
+        approval_request: ApprovalRequest,
+        user_id: Optional[uuid.UUID],
+        *,
+        require_step_up: bool = True,
+    ) -> Optional[uuid.UUID]:
+        """Authorize a voter and bind Step-Up proof to that credential owner."""
+        actor_id = user_id
+        if approval_request.step_up_required and require_step_up:
+            if not approval_request.step_up_verified:
+                raise HTTPException(
+                    status_code=http_status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "Step-up verification required. Complete hardware key "
+                        "verification before deciding."
+                    ),
+                )
+            if not approval_request.step_up_credential_id:
+                raise HTTPException(
+                    status_code=http_status.HTTP_403_FORBIDDEN,
+                    detail="Step-up credential proof is missing",
+                )
+            credential_owner = await get_webauthn_credential_owner_async(
+                self.db,
+                credential_id=bytes(approval_request.step_up_credential_id),
+                account_id=approval_request.account_id,
+            )
+            if credential_owner is None:
+                raise HTTPException(
+                    status_code=http_status.HTTP_403_FORBIDDEN,
+                    detail="Step-up credential owner could not be verified",
+                )
+            if actor_id is not None and actor_id != credential_owner:
+                raise HTTPException(
+                    status_code=http_status.HTTP_403_FORBIDDEN,
+                    detail="Decision actor does not match the Step-up credential owner",
+                )
+            actor_id = credential_owner
+
+        if actor_id is not None and not await is_user_authorized_approver_async(
+            self.db,
+            workflow_id=approval_request.approval_workflow_id,
+            account_id=approval_request.account_id,
+            user_id=actor_id,
+        ):
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail="User is not an authorized approver for this workflow",
+            )
+        return actor_id
+
     async def _record_event(
         self,
         approval_request_id: uuid.UUID,
@@ -477,6 +597,12 @@ class ApprovalService:
         if not approval_request:
             return None
 
+        from preloop.services.approval_expiry import require_unexpired_approval
+
+        require_unexpired_approval(approval_request)
+
+        user_id = await self._authorize_decision_actor(approval_request, user_id)
+
         # Get the approval workflow to check quorum requirements
         approval_workflow = approval_request.approval_workflow
         approvals_required = (
@@ -521,10 +647,12 @@ class ApprovalService:
                     event_type="approval_complete",
                     detail="Approval request approved",
                 )
+                decision_time = datetime.utcnow()
                 update = ApprovalRequestUpdate(
                     status="approved",
                     approver_comment=comment,
-                    resolved_at=datetime.utcnow(),
+                    resolved_at=decision_time,
+                    decided_at=decision_time,
                 )
                 updated_request = await self.update_approval_request(request_id, update)
                 if updated_request:
@@ -584,10 +712,13 @@ class ApprovalService:
         # Check if quorum is met
         if approval_count >= approvals_required:
             # Quorum met - resolve as approved
+            decision_time = datetime.utcnow()
             update = ApprovalRequestUpdate(
                 status="approved",
                 approver_comment=comment,
-                resolved_at=datetime.utcnow(),
+                resolved_at=decision_time,
+                decided_by_user_id=user_id,
+                decided_at=decision_time,
             )
             # Update responses in the database
             approval_request.responses = responses
@@ -666,6 +797,12 @@ class ApprovalService:
         if not approval_request:
             return None
 
+        # An authenticated authorized approver can refuse an action without
+        # signing it. Anonymous/token decisions retain the existing proof gate.
+        user_id = await self._authorize_decision_actor(
+            approval_request, user_id, require_step_up=user_id is None
+        )
+
         # Get the approval workflow to check quorum requirements
         approval_workflow = approval_request.approval_workflow
         approvals_required = (
@@ -710,10 +847,12 @@ class ApprovalService:
                     event_type="approval_complete",
                     detail="Approval request declined",
                 )
+                decision_time = datetime.utcnow()
                 update = ApprovalRequestUpdate(
                     status="declined",
                     approver_comment=comment,
-                    resolved_at=datetime.utcnow(),
+                    resolved_at=decision_time,
+                    decided_at=decision_time,
                 )
                 updated_request = await self.update_approval_request(request_id, update)
                 if updated_request:
@@ -800,10 +939,13 @@ class ApprovalService:
 
         if should_decline:
             # Cannot reach quorum - resolve as declined
+            decision_time = datetime.utcnow()
             update = ApprovalRequestUpdate(
                 status="declined",
                 approver_comment=comment,
-                resolved_at=datetime.utcnow(),
+                resolved_at=decision_time,
+                decided_by_user_id=user_id,
+                decided_at=decision_time,
             )
             # Update responses in the database
             approval_request.responses = responses
@@ -918,10 +1060,12 @@ class ApprovalService:
         Returns:
             Updated approval request or None if not found
         """
+        decision_time = datetime.utcnow()
         update = ApprovalRequestUpdate(
             status="approved",
             approver_comment=reason,
-            resolved_at=datetime.utcnow(),
+            resolved_at=decision_time,
+            decided_at=decision_time,
             decided_by_ai=decided_by_ai,
             ai_model=ai_model,
             ai_confidence=ai_confidence,
@@ -965,10 +1109,12 @@ class ApprovalService:
         Returns:
             Updated approval request or None if not found
         """
+        decision_time = datetime.utcnow()
         update = ApprovalRequestUpdate(
             status="declined",
             approver_comment=reason,
-            resolved_at=datetime.utcnow(),
+            resolved_at=decision_time,
+            decided_at=decision_time,
             decided_by_ai=decided_by_ai,
             ai_model=ai_model,
             ai_confidence=ai_confidence,
@@ -1166,6 +1312,7 @@ class ApprovalService:
         agent_reasoning: Optional[str] = None,
         execution_id: Optional[str] = None,
         user_id: Optional[uuid.UUID] = None,
+        server_recorded_context: Optional[Dict[str, Any]] = None,
     ) -> ApprovalRequest:
         """Create approval request and send notifications through configured channels.
 
@@ -1187,7 +1334,65 @@ class ApprovalService:
         """
         # Store raw tool_args for execution; redact only for logging/notifications
         # (see ARCHITECTURE.md Redaction Policy)
-        # Create approval request first
+
+        # ── Intent verification (Phase 0 + optional Phase 1) ─────────────────
+        # Phase 0 (always): rule_based_check — synchronous, < 1 ms, zero cost.
+        # Phase 1 (opt-in): IntentVerifier.verify — async LLM call, configured
+        #   per workflow via intent_verification_enabled.
+        # Results are merged conservatively (one-way ratchet: verifier can only
+        # escalate step_up_required, never lower it).
+        from preloop.services.intent_verifier import IntentVerifier
+
+        _verifier = IntentVerifier.from_workflow(approval_workflow)
+        # For request_approval tool calls, tool_args carries an "operation" key
+        # (the agent's description of what it intends to do) separate from
+        # "reasoning" (why). Extract it when present so the LLM verifier can
+        # score description_match_score against the actual tool_args.
+        _tool_args = tool_args or {}
+        _operation = (
+            _tool_args.get("operation")
+            or _tool_args.get("context")
+            or agent_reasoning
+            or ""
+        )
+        _intent = await _verifier.verify(
+            tool_name=tool_name,
+            tool_args=_tool_args,
+            operation=_operation,
+            agent_reasoning=agent_reasoning or "",
+        )
+
+        # One-way ratchet: workflow step_up_protocol is the floor.
+        _step_up_required = (
+            bool(approval_workflow.step_up_protocol) or _intent.step_up_override
+        )
+
+        # Capture the exact workflow and advisory provenance used for this decision.
+        # This is unsigned server context, never reconstructed on read.
+        if server_recorded_context is not None:
+            server_recorded_context = copy.deepcopy(server_recorded_context)
+            server_recorded_context["workflow"] = {
+                "id": str(approval_workflow.id),
+                "approval_type": approval_workflow.approval_type,
+                "step_up_protocol": approval_workflow.step_up_protocol,
+                "timeout_seconds": approval_workflow.timeout_seconds,
+                "effective_step_up_required": bool(_step_up_required),
+            }
+            server_recorded_context["advisory_assessment"] = {
+                "source": "intent_verifier",
+                "model_used": _intent.model_used,
+                "advisory": True,
+            }
+
+        # Unsigned server evidence: fix execution ownership before request commit.
+        server_recorded_context = copy.deepcopy(server_recorded_context or {})
+        server_recorded_context["execution_mode"] = (
+            "asynchronous"
+            if approval_workflow.async_approval_enabled
+            else "synchronous"
+        )
+
+        # Create approval request with merged step_up determination
         approval_request = await self.create_approval_request(
             account_id=account_id,
             tool_configuration_id=tool_configuration_id,
@@ -1197,6 +1402,9 @@ class ApprovalService:
             agent_reasoning=agent_reasoning,
             execution_id=execution_id,
             timeout_seconds=approval_workflow.timeout_seconds,
+            step_up_required=_step_up_required,
+            intent_result=_intent,
+            server_recorded_context=server_recorded_context,
         )
 
         # Check if this is an AI-driven approval workflow

@@ -7,7 +7,6 @@ passing tokens as query parameters.
 
 import logging
 from typing import Optional
-from uuid import UUID
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -141,29 +140,16 @@ class WebSocketAuthMiddleware:
         Returns:
             User object if valid, None otherwise
         """
-        try:
-            from preloop.api.auth.jwt import decode_token
-            from preloop.models.crud import crud_user
-            from preloop.models.db.session import get_db_session
+        from preloop.api.auth.jwt import decode_token, get_detached_socket_user
 
+        try:
+            # Upgrade-header authentication remains JWT-only, as before.
             token_data = decode_token(token)
             if not token_data or not token_data.sub:
                 return None
-
-            # Get user from database via CRUD layer
-            db = next(get_db_session())
-            try:
-                user = crud_user.get(db, id=UUID(token_data.sub))
-                if user and user.is_active:
-                    # Detach from session so it can be used in handlers
-                    db.expunge(user)
-                    return user
-                return None
-            finally:
-                db.close()
-
-        except Exception as e:
-            logger.debug(f"Token validation failed: {e}")
+            return await get_detached_socket_user(token)
+        except Exception as exc:
+            logger.debug("Token validation failed: %s", exc)
             return None
 
     async def _send_close(self, send: Send, code: int, reason: str) -> None:

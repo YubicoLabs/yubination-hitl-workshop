@@ -116,12 +116,12 @@ def get_engine(database_url: Optional[str] = None):
         if not check_pgvector_extension(_engine):
             install_pgvector_extension(_engine)
 
-        logger.debug(f"Connected to database using {url}")
+        logger.debug("Database connection established")
         return _engine
     except (ImportError, SQLAlchemyError) as e:
-        logger.error(f"Database connection failed: {e}")
+        logger.error("Database connection failed ({})", type(e).__name__)
         _engine = None  # Reset on failure
-        raise Exception(f"Database connection failed: {e}")
+        raise Exception("Database connection failed") from None
 
 
 def get_session_factory(engine=None):
@@ -163,11 +163,11 @@ def get_async_engine(database_url: Optional[str] = None) -> AsyncEngine:
     if not url:
         raise Exception("DATABASE_URL not in env")
 
-    # Convert psycopg to asyncpg for async operations
-    if url.startswith("postgresql+psycopg://"):
-        url = url.replace("postgresql+psycopg://", "postgresql+asyncpg://")
-    elif url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+asyncpg://")
+    # Convert any sync postgres driver URL to asyncpg for async operations
+    for prefix in ("postgresql+psycopg2://", "postgresql+psycopg://", "postgresql://"):
+        if url.startswith(prefix):
+            url = "postgresql+asyncpg://" + url[len(prefix) :]
+            break
 
     try:
         # Configure connection pool with proper limits, recycling, and timeouts
@@ -181,12 +181,12 @@ def get_async_engine(database_url: Optional[str] = None) -> AsyncEngine:
             echo=False,  # Set to True for SQL query debugging
         )
 
-        logger.debug(f"Connected to async database using {url}")
+        logger.debug("Async database engine initialized")
         return _async_engine
     except (ImportError, SQLAlchemyError) as e:
-        logger.error(f"Async database connection failed: {e}")
+        logger.error("Async database connection failed ({})", type(e).__name__)
         _async_engine = None  # Reset on failure
-        raise Exception(f"Async database connection failed: {e}")
+        raise Exception("Async database connection failed") from None
 
 
 def get_async_session_factory(

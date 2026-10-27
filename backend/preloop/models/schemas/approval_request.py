@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, computed_field
 
+from preloop.models.schemas.approval_evidence import ServerRecordedContext
+
 
 class ApprovalRequestBase(BaseModel):
     """Base schema for approval requests."""
@@ -37,6 +39,8 @@ class ApprovalRequestUpdate(BaseModel):
     status: Optional[str] = None
     approver_comment: Optional[str] = None
     resolved_at: Optional[datetime] = None
+    decided_by_user_id: Optional[UUID] = None
+    decided_at: Optional[datetime] = None
     webhook_posted_at: Optional[datetime] = None
     webhook_error: Optional[str] = None
     # AI decision tracking fields
@@ -56,6 +60,8 @@ class ApprovalRequestResponse(ApprovalRequestBase):
     status: str
     requested_at: datetime
     resolved_at: Optional[datetime]
+    decided_by_user_id: Optional[UUID] = None
+    decided_at: Optional[datetime] = None
     expires_at: Optional[datetime]
     approver_comment: Optional[str]
     webhook_posted_at: Optional[datetime]
@@ -65,6 +71,39 @@ class ApprovalRequestResponse(ApprovalRequestBase):
     ai_model: Optional[str] = None
     ai_confidence: Optional[float] = None
     ai_reasoning: Optional[str] = None
+    # Step-up verification fields
+    step_up_required: bool = False
+    step_up_verified: bool = False
+    arkg_step_up_verified: bool = False
+    step_up_protocol: Optional[str] = None
+    approval_token: Optional[str] = None
+    # ARKG proof fields — populated by the endpoint when arkg_step_up_verified
+    arkg_step_up_signature_hex: Optional[str] = None
+    arkg_derived_pk_hex: Optional[str] = None
+    # RDT intent fingerprint — SHA-256(JCS(intent_envelope)); common to both step-up flows
+    intent_hash_hex: Optional[str] = None
+    rdt_envelope: Optional[Dict[str, Any]] = None
+    action_class: Optional[str] = None
+    server_recorded_context: Optional[ServerRecordedContext] = Field(
+        None,
+        description=(
+            "Server-recorded requester and matched-policy context. This context is "
+            "not cryptographically bound to the intent signature; null means unknown "
+            "for legacy requests."
+        ),
+    )
+
+    # ── Intent verifier fields ────────────────────────────────────────────────
+    # All nullable — None for requests created before this feature, or when
+    # the verifier was not enabled on the workflow.
+    intent_verified: bool = False
+    intent_risk_tier: Optional[str] = None
+    intent_step_up_override: Optional[bool] = None
+    intent_description_match_score: Optional[float] = None
+    intent_flags: Optional[list] = None
+    intent_reasoning: Optional[str] = None
+    intent_model: Optional[str] = None
+    intent_latency_ms: Optional[int] = None
 
     # Computed fields for backward compatibility
     @computed_field
@@ -75,7 +114,11 @@ class ApprovalRequestResponse(ApprovalRequestBase):
     model_config = ConfigDict(from_attributes=True)
 
     @field_serializer(
-        "id", "account_id", "tool_configuration_id", "approval_workflow_id"
+        "id",
+        "account_id",
+        "tool_configuration_id",
+        "approval_workflow_id",
+        "decided_by_user_id",
     )
     def serialize_uuid(self, value: Optional[UUID]) -> Optional[str]:
         """Serialize UUID to string."""
@@ -89,3 +132,16 @@ class ApprovalDecision(BaseModel):
         ..., description="Whether the request is approved or declined"
     )
     comment: Optional[str] = Field(None, description="Comment from the approver")
+
+
+class IntentHashVerificationResponse(BaseModel):
+    """Integrity-only verification of the versioned intent envelope."""
+
+    request_id: UUID
+    envelope_version: int
+    intent_intact: bool
+    signature_verified: bool = False
+    detail: str = (
+        "Intent Hash matching checks covered evidence integrity only; "
+        "it does not verify an agent assertion or hardware signature."
+    )

@@ -32,6 +32,9 @@ export class ToolListItem extends LitElement {
   @state() private _justificationMode: string = 'disabled';
 
   static styles = css`
+    [hidden] {
+      display: none !important;
+    }
     :host {
       display: block;
     }
@@ -426,7 +429,11 @@ export class ToolListItem extends LitElement {
             ${this._renderRuleSummaryBadges()}
           </div>
 
-          <div class="tool-toggle" @click=${(e: Event) => e.stopPropagation()}>
+          <div
+            class="tool-toggle"
+            ?hidden=${this.features['workshop_configuration_locked'] === true}
+            @click=${(e: Event) => e.stopPropagation()}
+          >
             <sl-switch
               size="small"
               ?checked=${this.tool.is_enabled}
@@ -435,7 +442,10 @@ export class ToolListItem extends LitElement {
             ></sl-switch>
           </div>
 
-          <div @click=${(e: Event) => e.stopPropagation()}>
+          <div
+            ?hidden=${this.features['workshop_configuration_locked'] === true}
+            @click=${(e: Event) => e.stopPropagation()}
+          >
             <sl-dropdown>
               <sl-icon-button
                 slot="trigger"

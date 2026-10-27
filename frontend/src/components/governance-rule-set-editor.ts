@@ -37,6 +37,9 @@ export class GovernanceRuleSetEditor extends LitElement {
   @state() private _dragOverIndex: number | null = null;
 
   static styles = css`
+    [hidden] {
+      display: none !important;
+    }
     :host {
       display: block;
     }
@@ -362,14 +365,20 @@ export class GovernanceRuleSetEditor extends LitElement {
         class="rule-item ${!rule.is_enabled ? 'disabled-rule' : ''} ${isDragging
           ? 'dragging'
           : ''} ${dragPosition}"
-        draggable="true"
+        draggable=${this.features['workshop_configuration_locked'] === true
+          ? 'false'
+          : 'true'}
         @dragstart=${(e: DragEvent) => this._handleDragStart(index, e)}
         @dragover=${(e: DragEvent) => this._handleDragOver(index, e)}
         @dragleave=${() => this._handleDragLeave()}
         @drop=${(e: DragEvent) => this._handleDrop(index, e)}
         @dragend=${() => this._handleDragEnd()}
       >
-        <sl-icon class="drag-handle" name="grip-vertical"></sl-icon>
+        <sl-icon
+          class="drag-handle"
+          name="grip-vertical"
+          ?hidden=${this.features['workshop_configuration_locked'] === true}
+        ></sl-icon>
         <span class="rule-priority">${index + 1}.</span>
         <sl-icon
           class="rule-action-icon ${colorClass}"
@@ -396,7 +405,10 @@ export class GovernanceRuleSetEditor extends LitElement {
               </div>`
             : ''}
         </div>
-        <div class="rule-actions">
+        <div
+          class="rule-actions"
+          ?hidden=${this.features['workshop_configuration_locked'] === true}
+        >
           <sl-tooltip content="Edit rule">
             <sl-icon-button
               name="pencil"
@@ -424,7 +436,10 @@ export class GovernanceRuleSetEditor extends LitElement {
           : sortedRules.map((rule, index) => this._renderRuleItem(rule, index))}
       </div>
 
-      <div class="rules-footer">
+      <div
+        class="rules-footer"
+        ?hidden=${this.features['workshop_configuration_locked'] === true}
+      >
         <sl-button
           size="small"
           variant="default"

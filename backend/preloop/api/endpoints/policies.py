@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from preloop.api.auth.jwt import get_current_user
 from preloop.api.common import get_account_for_user
+from preloop.api.workshop import require_configuration_unlocked
 from preloop.models.db.session import get_db_session
 from preloop.models.models.account import Account
 from preloop.models.models.user import User
@@ -279,6 +280,7 @@ async def validate_policy(
 
 @router.post(
     "/policies/upload",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=PolicyImportResult,
     summary="Upload and apply a policy file",
     description="Upload a YAML/JSON policy file and apply it to your account.",
@@ -712,6 +714,7 @@ def get_policy_version(
 
 @router.post(
     "/policies/versions",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=PolicyVersionFull,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new policy version",
@@ -756,6 +759,7 @@ async def create_policy_version(
 
 @router.put(
     "/policies/versions/{version_id}/tag",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=PolicyVersionMetadata,
     summary="Add or update tag on a version",
     description="Add or update the tag on a policy version.",
@@ -803,6 +807,7 @@ async def update_version_tag(
 
 @router.delete(
     "/policies/versions/{version_id}/tag",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=PolicyVersionMetadata,
     summary="Remove tag from a version",
     description="Remove the tag from a policy version.",
@@ -843,6 +848,7 @@ async def remove_version_tag(
 
 @router.post(
     "/policies/versions/{version_id}/rollback",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=RollbackResponse,
     summary="Rollback to a previous version",
     description="Apply a previous policy version to restore that configuration.",
@@ -893,6 +899,7 @@ async def rollback_to_version(
 
 @router.delete(
     "/policies/versions/{version_id}",
+    dependencies=[Depends(require_configuration_unlocked)],
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a policy version",
     description="Delete a policy version. Cannot delete the active version.",
@@ -936,6 +943,7 @@ async def delete_policy_version(
 
 @router.post(
     "/policies/versions/prune",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=PruneResponse,
     summary="Prune old policy versions",
     description="Delete old unused policy versions based on age and count criteria.",
@@ -1024,6 +1032,7 @@ class GeneratePolicyResponse(BaseModel):
 
 @router.post(
     "/policies/generate",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=GeneratePolicyResponse,
     summary="Generate a policy from a description",
     description=(
@@ -1097,6 +1106,7 @@ async def generate_policy(
 
 @router.post(
     "/policies/generate-from-audit",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=GeneratePolicyResponse,
     summary="Generate a policy from audit-log patterns",
     description=(

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from preloop.api.auth import get_current_active_user
 from preloop.api.common import get_account_for_user
+from preloop.api.workshop import require_configuration_unlocked
 from preloop.models.models.user import User
 from preloop.models.crud import (
     crud_approval_workflow,
@@ -601,7 +602,11 @@ def list_all_tools(
     return tools
 
 
-@router.post("/tool-configurations", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/tool-configurations",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 async def create_tool_configuration(
     config_data: ToolConfigurationCreate,
     account: Account = Depends(get_account_for_user),
@@ -735,7 +740,9 @@ async def get_tool_configuration(
 
 
 @router.put(
-    "/tool-configurations/{config_id}", response_model=ToolConfigurationResponse
+    "/tool-configurations/{config_id}",
+    response_model=ToolConfigurationResponse,
+    dependencies=[Depends(require_configuration_unlocked)],
 )
 async def update_tool_configuration(
     config_id: UUID,
@@ -810,6 +817,7 @@ async def update_tool_configuration(
 
 @router.put(
     "/tool-configurations/{config_id}/condition",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=ToolConfigurationResponse,
 )
 async def update_tool_approval_condition(
@@ -908,7 +916,11 @@ async def update_tool_approval_condition(
         )
 
 
-@router.delete("/tool-configurations/{config_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/tool-configurations/{config_id}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 async def delete_tool_configuration(
     config_id: UUID,
     account: Account = Depends(get_account_for_user),
@@ -961,7 +973,7 @@ async def delete_tool_configuration(
 
 
 @router.get("/approval-workflows", response_model=List[ApprovalWorkflowResponse])
-async def list_approval_workflows(
+def list_approval_workflows(
     account: Account = Depends(get_account_for_user),
     db: Session = Depends(get_db_session),
 ) -> List[ApprovalWorkflowResponse]:
@@ -983,7 +995,11 @@ async def list_approval_workflows(
     return [ApprovalWorkflowResponse.model_validate(p) for p in policies]
 
 
-@router.post("/approval-workflows", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/approval-workflows",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 async def create_approval_workflow(
     workflow_data: ApprovalWorkflowCreate,
     account: Account = Depends(get_account_for_user),
@@ -1078,7 +1094,9 @@ async def get_approval_workflow(
 
 
 @router.put(
-    "/approval-workflows/{workflow_id}", response_model=ApprovalWorkflowResponse
+    "/approval-workflows/{workflow_id}",
+    response_model=ApprovalWorkflowResponse,
+    dependencies=[Depends(require_configuration_unlocked)],
 )
 async def update_approval_workflow(
     workflow_id: UUID,
@@ -1160,7 +1178,11 @@ async def update_approval_workflow(
         )
 
 
-@router.delete("/approval-workflows/{workflow_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/approval-workflows/{workflow_id}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_configuration_unlocked)],
+)
 async def delete_approval_workflow(
     workflow_id: UUID,
     account: Account = Depends(get_account_for_user),
@@ -1309,6 +1331,7 @@ async def get_tool_approval_condition(
 
 @router.put(
     "/tool-configurations/{config_id}/approval-condition",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=ToolApprovalConditionResponse,
 )
 async def create_or_update_tool_approval_condition(
@@ -1424,6 +1447,7 @@ async def create_or_update_tool_approval_condition(
 
 @router.delete(
     "/tool-configurations/{config_id}/approval-condition",
+    dependencies=[Depends(require_configuration_unlocked)],
     status_code=status.HTTP_200_OK,
 )
 async def delete_tool_approval_condition(
@@ -1659,6 +1683,7 @@ async def list_access_rules(
 
 @router.post(
     "/tool-configurations/{config_id}/access-rules",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=AccessRuleResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -1744,6 +1769,7 @@ async def create_access_rule(
 
 @router.put(
     "/access-rules/{rule_id}",
+    dependencies=[Depends(require_configuration_unlocked)],
     response_model=AccessRuleResponse,
 )
 async def update_access_rule(
@@ -1822,6 +1848,7 @@ async def update_access_rule(
 
 @router.delete(
     "/access-rules/{rule_id}",
+    dependencies=[Depends(require_configuration_unlocked)],
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_access_rule(

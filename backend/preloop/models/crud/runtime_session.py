@@ -492,8 +492,11 @@ class CRUDRuntimeSession(CRUDBase[RuntimeSession]):
                 self.model.runtime_principal_type,
                 self.model.runtime_principal_id,
                 self.model.runtime_principal_name,
-                summary_column,
-                summary_updated_at_column,
+                *(
+                    (summary_column, summary_updated_at_column)
+                    if summary_columns_available
+                    else ()
+                ),
                 self.model.started_at,
                 self.model.last_activity_at,
                 self.model.ended_at,
@@ -624,8 +627,11 @@ class CRUDRuntimeSession(CRUDBase[RuntimeSession]):
                 self.model.runtime_principal_type,
                 self.model.runtime_principal_id,
                 self.model.runtime_principal_name,
-                summary_column,
-                summary_updated_at_column,
+                *(
+                    (summary_column, summary_updated_at_column)
+                    if summary_columns_available
+                    else ()
+                ),
                 self.model.started_at,
                 self.model.last_activity_at,
                 self.model.ended_at,

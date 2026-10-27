@@ -5,14 +5,28 @@ with real-time progress updates via FastMCP Context.
 """
 
 import asyncio
+import copy
+import json
 import logging
 import os
+import uuid
+from contextvars import ContextVar
 from typing import Optional, Tuple
 
 from fastmcp import Context
 from preloop.models import models
 
 logger = logging.getLogger(__name__)
+
+
+# Set only for an exact approved synchronous request; the governed wrapper scopes it.
+approved_request_id: ContextVar[Optional[uuid.UUID]] = ContextVar(
+    "approved_request_id", default=None
+)
+
+
+class ApprovalTimeoutMessage(str):
+    """Timeout outcome retaining the helper's existing string-return contract."""
 
 
 async def require_approval(
@@ -53,7 +67,10 @@ async def require_approval(
     try:
         # Check if approval should be bypassed (e.g. during async re-execution
         # of an already-approved tool call).
-        from preloop.services.dynamic_fastmcp import _bypass_approval_var
+        from preloop.services.dynamic_fastmcp import (
+            _bypass_approval_var,
+            _policy_evidence_var,
+        )
 
         if _bypass_approval_var.get(False):
             logger.info(f"Bypassing approval for '{tool_name}' (async re-execution)")
@@ -63,7 +80,9 @@ async def require_approval(
         from preloop.models.crud.tool_configuration import (
             get_tool_config_by_name_and_source_async,
         )
-        from preloop.models.crud.approval_workflow import get_approval_workflow_async
+        from preloop.models.crud.approval_workflow import (
+            get_approval_workflow_for_account_async,
+        )
 
         logger.info(
             f"Checking approval requirement for {tool_source} tool '{tool_name}' "
@@ -84,8 +103,10 @@ async def require_approval(
                 logger.info(
                     f"Using explicitly provided workflow_id={workflow_id} for tool {tool_name}"
                 )
-                workflow = await get_approval_workflow_async(
-                    db, workflow_id=workflow_id
+                workflow = await get_approval_workflow_for_account_async(
+                    db,
+                    workflow_id=uuid.UUID(str(workflow_id)),
+                    account_id=uuid.UUID(str(account_id)),
                 )
 
                 if not workflow:
@@ -224,8 +245,10 @@ async def require_approval(
                     return (True, "")
 
                 # Get approval workflow from tool configuration
-                workflow = await get_approval_workflow_async(
-                    db, workflow_id=config.approval_workflow_id
+                workflow = await get_approval_workflow_for_account_async(
+                    db,
+                    workflow_id=uuid.UUID(str(config.approval_workflow_id)),
+                    account_id=uuid.UUID(str(account_id)),
                 )
 
                 if not workflow:
@@ -259,6 +282,9 @@ async def require_approval(
                     tool_args=arguments,
                     agent_reasoning=justification,
                     execution_id=None,
+                    server_recorded_context=copy.deepcopy(
+                        _policy_evidence_var.get(None)
+                    ),
                 )
 
                 approval_url = f"{base_url}/approval/{approval_request.id}?token={approval_request.approval_token}"
@@ -313,10 +339,26 @@ async def require_approval(
                         )
                     await event_db.commit()
 
+                # If AI already resolved the request, return immediately
+                if approval_request.status == "approved":
+                    logger.info(
+                        f"AI auto-approved request {approval_request.id} — returning immediately"
+                    )
+                    if not getattr(workflow, "async_approval_enabled", False):
+                        approved_request_id.set(approval_request.id)
+                    return (True, "")
+                elif approval_request.status in ("declined", "denied"):
+                    reason = (
+                        getattr(approval_request, "ai_reasoning", None)
+                        or "AI reviewer declined"
+                    )
+                    logger.info(
+                        f"AI auto-declined request {approval_request.id}: {reason}"
+                    )
+                    return (False, f"AI reviewer declined: {reason}")
+
                 # Check if async approval mode is enabled
                 if getattr(workflow, "async_approval_enabled", False):
-                    import json
-
                     logger.info(
                         f"Async approval enabled for workflow '{workflow.name}' - "
                         f"returning immediately with polling instructions"
@@ -379,7 +421,14 @@ async def require_approval(
                             f"Context: has report_progress={hasattr(ctx, 'report_progress')}"
                         )
                         # Report progress at 0% with status message
-                        status_message = f"Approval request sent via {channels_display}"
+                        # Machine-readable correlation on this authenticated MCP stream.
+                        # Never include the approval bearer token or URL.
+                        status_message = json.dumps(
+                            {
+                                "type": "preloop.approval_required",
+                                "request_id": str(approval_request.id),
+                            }
+                        )
                         # Check if progressToken is available (do not log - sensitive)
                         progress_token = None
                         try:
@@ -606,7 +655,9 @@ async def require_approval(
                                 )
                             return (
                                 False,
-                                f"Approval timeout: request expired after {timeout_seconds}s",
+                                ApprovalTimeoutMessage(
+                                    f"Approval timeout: request expired after {timeout_seconds}s"
+                                ),
                             )
 
                     # Check if escalation timeout expired (after escalation was triggered)
@@ -636,7 +687,9 @@ async def require_approval(
                             )
                         return (
                             False,
-                            f"Approval timeout: request expired after {total_timeout}s (including escalation)",
+                            ApprovalTimeoutMessage(
+                                f"Approval timeout: request expired after {total_timeout}s (including escalation)"
+                            ),
                         )
 
                     # Send progress update every 10 seconds via Context
@@ -713,6 +766,11 @@ async def require_approval(
                 elif final_status == "cancelled":
                     logger.warning(f"Tool {tool_name} execution cancelled")
                     return (False, "Tool execution cancelled")
+                elif final_status == "expired":
+                    return (
+                        False,
+                        ApprovalTimeoutMessage("Approval timeout: request expired"),
+                    )
                 elif final_status != "approved":
                     logger.error(
                         f"Unexpected approval status for tool {tool_name}: {final_status}"
@@ -723,6 +781,7 @@ async def require_approval(
                     )
 
                 # Approved! Continue with execution
+                approved_request_id.set(approval_request.id)
                 logger.warning(
                     f"✅ Tool {tool_name} APPROVED - proceeding with execution"
                 )

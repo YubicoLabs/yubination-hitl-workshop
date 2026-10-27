@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -428,6 +429,7 @@ func init() {
 	agentsCmd.AddCommand(agentsOffboardCmd)
 	agentsCmd.AddCommand(agentsStarterPolicyCmd)
 
+	agentsDiscoverCmd.Flags().Bool("json", false, "output discovered agent configurations as JSON")
 	agentsDiscoverCmd.Flags().Bool("add", false, "deprecated: use 'preloop agents onboard <agent>' instead")
 	agentsDiscoverCmd.Flags().Bool("no-onboard-prompt", false, "do not prompt to onboard discovered agents")
 	agentsDiscoverCmd.Flags().BoolP("yes", "y", false, "auto-approve interactive onboarding prompts")
@@ -2771,7 +2773,7 @@ func buildManagedMCPEnrollmentPlan(agent AgentConfig, baseURL, token string) (ma
 	if err != nil {
 		return managedMCPEnrollmentPlan{}, err
 	}
-	removedPreloopServers := prunePreloopOwnedMCPServersFromDocument(managedDoc)
+	removedPreloopServers := prunePreloopOwnedMCPServersFromDocument(managedDoc, baseURL)
 	container["preloop"] = adapter.BuildManagedServer(baseURL, token)
 	ensureLegacyCodexMCPServer(agent, managedDoc, baseURL, token)
 	if supportsAgentControlChannel(agent) {
@@ -3351,7 +3353,7 @@ func ensureDiscoveredRemoteServers(client *api.Client, agent AgentConfig, public
 	result := &remoteServerSyncResult{}
 	for _, name := range sortedServerNames(agent.MCPServers) {
 		server := agent.MCPServers[name]
-		if isPreloopOwnedMCPServer(name, server) {
+		if isPreloopOwnedMCPServer(server, publicURL) {
 			result.Warnings = append(
 				result.Warnings,
 				fmt.Sprintf(
@@ -3362,7 +3364,7 @@ func ensureDiscoveredRemoteServers(client *api.Client, agent AgentConfig, public
 			result.Skipped = append(result.Skipped, name)
 			continue
 		}
-		request, warning, importMode, ok := buildManagedRemoteServerRequest(name, server)
+		request, warning, importMode, ok := buildManagedRemoteServerRequest(name, server, publicURL)
 		if warning != "" {
 			result.Warnings = append(result.Warnings, warning)
 		}
@@ -3504,6 +3506,14 @@ func createDurableManagedCredential(client *api.Client, agent *managedAgentSumma
 }
 
 func createManagedEnrollmentRecord(client *api.Client, agentID string, request managedAgentEnrollmentCreateRequest) (*managedAgentEnrollmentSummary, error) {
+	request.EnrollmentType = enrollmentProtocolValue(request.EnrollmentType, []string{"cli_managed_config", "cli_managed_config_restore"}, "cli_managed_config")
+	request.AdapterKey = enrollmentProtocolValue(request.AdapterKey, []string{"claude_code", "claude_desktop", "codex", "openclaw", "gemini_cli", "opencode", "hermes", "desktop_agent"}, "")
+	request.Status = enrollmentStatus(request.Status)
+	request.TargetConfigPath = ""
+	request.DiscoveredConfig = nil
+	request.ManagedConfig = nil
+	request.BackupMetadata = nil
+	request.ValidationResult = projectEnrollmentValidation(request.ValidationResult)
 	var response managedAgentEnrollmentSummary
 	if err := client.Post("/api/v1/agents/"+agentID+"/enrollments", request, &response); err != nil {
 		return nil, fmt.Errorf("failed to persist managed enrollment: %w", err)
@@ -3539,8 +3549,8 @@ func validateManagedEnrollmentRecord(
 		return nil, err
 	}
 	request := map[string]interface{}{
-		"status":            status,
-		"validation_result": validationResult,
+		"status":            enrollmentStatus(status),
+		"validation_result": projectEnrollmentValidation(validationResult),
 	}
 	var response managedAgentEnrollmentSummary
 	if err := client.Post(
@@ -3564,13 +3574,9 @@ func restoreManagedEnrollmentRecord(
 		return nil, err
 	}
 	request := map[string]interface{}{
-		"status": "restored",
-		"backup_metadata": map[string]interface{}{
-			"backup_path": backupMetadata["backup_path"],
-		},
-		"validation_result": map[string]interface{}{
-			"restored_by": "preloop agents restore",
-		},
+		"status":            "restored",
+		"backup_metadata":   map[string]interface{}{},
+		"validation_result": map[string]interface{}{},
 	}
 	var response managedAgentEnrollmentSummary
 	if err := client.Post(
@@ -3583,30 +3589,60 @@ func restoreManagedEnrollmentRecord(
 	return &response, nil
 }
 
-func createLocalEnrollmentBackup(agent AgentConfig, configExisted bool, originalBytes []byte, plan managedMCPEnrollmentPlan) (*localEnrollmentState, error) {
+func validatedLocalEnrollmentState(agent AgentConfig) (*localEnrollmentState, error) {
 	if existingState, err := loadLocalEnrollmentState(agent); err == nil {
-		if strings.TrimSpace(existingState.BackupPath) != "" {
-			if _, statErr := os.Stat(existingState.BackupPath); statErr == nil {
-				discoveredConfig := existingState.DiscoveredConfig
-				if len(discoveredConfig) == 0 {
-					discoveredConfig = plan.SanitizedDiscovered
-				}
-				return &localEnrollmentState{
-					AgentName:           agent.Name,
-					DisplayName:         resolveAgentDisplayName(agent),
-					RuntimePrincipalID:  runtimePrincipalIDForAgent(agent),
-					ConfigPath:          agent.ConfigPath,
-					ConfigExisted:       existingState.ConfigExisted,
-					BackupPath:          existingState.BackupPath,
-					ManagedServerName:   plan.ManagedServerName,
-					ManagedServerURL:    plan.ManagedServerURL,
-					ManagedControlWSURL: plan.ManagedControlWSURL,
-					AppliedAt:           time.Now().UTC(),
-					DiscoveredConfig:    discoveredConfig,
-					ManagedConfig:       plan.SanitizedManaged,
-				}, nil
-			}
+		if strings.TrimSpace(existingState.BackupPath) == "" {
+			return nil, fmt.Errorf("local enrollment state is missing its backup path")
 		}
+		if _, err := os.ReadFile(existingState.BackupPath); err != nil {
+			return nil, fmt.Errorf("failed to read original enrollment backup: %w", err)
+		}
+		return existingState, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	baseDir, err := config.GetConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	for _, principalID := range runtimePrincipalIDCandidates(agent) {
+		candidateDir := filepath.Join(baseDir, "agents", "backups", principalID)
+		entries, err := os.ReadDir(candidateDir)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to inspect enrollment backups: %w", err)
+		}
+		if len(entries) > 0 {
+			return nil, fmt.Errorf("local enrollment state is missing but backup evidence exists at %s", candidateDir)
+		}
+	}
+	return nil, nil
+}
+
+func createLocalEnrollmentBackup(agent AgentConfig, configExisted bool, originalBytes []byte, plan managedMCPEnrollmentPlan) (*localEnrollmentState, error) {
+	existingState, err := validatedLocalEnrollmentState(agent)
+	if err != nil {
+		return nil, err
+	}
+	if existingState != nil {
+		discoveredConfig := existingState.DiscoveredConfig
+		if len(discoveredConfig) == 0 {
+			discoveredConfig = plan.SanitizedDiscovered
+		}
+		return &localEnrollmentState{
+			AgentName:           agent.Name,
+			DisplayName:         resolveAgentDisplayName(agent),
+			RuntimePrincipalID:  runtimePrincipalIDForAgent(agent),
+			EnrollmentID:        existingState.EnrollmentID,
+			ConfigPath:          agent.ConfigPath,
+			ConfigExisted:       existingState.ConfigExisted,
+			BackupPath:          existingState.BackupPath,
+			ManagedServerName:   plan.ManagedServerName,
+			ManagedServerURL:    plan.ManagedServerURL,
+			ManagedControlWSURL: plan.ManagedControlWSURL,
+			AppliedAt:           time.Now().UTC(),
+			DiscoveredConfig:    discoveredConfig,
+			ManagedConfig:       plan.SanitizedManaged,
+		}, nil
 	}
 	baseDir, err := config.GetConfigDir()
 	if err != nil {
@@ -3652,7 +3688,24 @@ func saveLocalEnrollmentState(state *localEnrollmentState) error {
 	if err != nil {
 		return fmt.Errorf("failed to encode local enrollment state: %w", err)
 	}
-	if err := os.WriteFile(statePath, data, 0600); err != nil {
+	temporary, err := os.CreateTemp(filepath.Dir(statePath), ".enrollment-state-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary enrollment state: %w", err)
+	}
+	defer func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+	}()
+	if _, err := temporary.Write(data); err != nil {
+		return fmt.Errorf("failed to persist local enrollment state: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("failed to sync local enrollment state: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("failed to close local enrollment state: %w", err)
+	}
+	if err := os.Rename(temporary.Name(), statePath); err != nil {
 		return fmt.Errorf("failed to persist local enrollment state: %w", err)
 	}
 	return nil
@@ -3664,6 +3717,9 @@ func loadLocalEnrollmentState(agent AgentConfig) (*localEnrollmentState, error) 
 		return nil, err
 	}
 	data, err := os.ReadFile(statePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("failed to read local enrollment state: %w", err)
+	}
 	if err != nil {
 		legacyPath, legacyPathErr := legacyLocalEnrollmentStatePath(agent)
 		if legacyPathErr != nil {
@@ -4352,7 +4408,7 @@ func isSensitiveKey(key string) bool {
 	}
 }
 
-func prunePreloopOwnedMCPServersFromDocument(doc map[string]interface{}) []string {
+func prunePreloopOwnedMCPServersFromDocument(doc map[string]interface{}, baseURL string) []string {
 	removed := map[string]struct{}{}
 	for _, container := range mcpServerContainers(doc) {
 		for name, raw := range container {
@@ -4360,7 +4416,7 @@ func prunePreloopOwnedMCPServersFromDocument(doc map[string]interface{}) []strin
 			if !ok {
 				continue
 			}
-			if isPreloopOwnedMCPServer(name, def) {
+			if isPreloopOwnedMCPServer(def, baseURL) {
 				delete(container, name)
 				removed[name] = struct{}{}
 			}
@@ -4423,26 +4479,40 @@ func mcpDefFromRawServer(raw interface{}) (MCPDef, bool) {
 	return def, true
 }
 
-func isPreloopOwnedMCPServer(name string, server MCPDef) bool {
-	if strings.EqualFold(strings.TrimSpace(name), "preloop") {
-		return true
-	}
+func isPreloopOwnedMCPServer(server MCPDef, baseURL string) bool {
 	targetURL := strings.TrimSpace(server.URL)
 	if targetURL == "" {
 		targetURL = extractURLFromCommandBackedServer(server)
 	}
-	if targetURL == "" {
-		return false
-	}
-	if !strings.Contains(targetURL, "://") {
-		targetURL = "https://" + targetURL
-	}
-	parsed, err := url.Parse(targetURL)
+	target, err := url.Parse(targetURL)
 	if err != nil {
 		return false
 	}
-	host := strings.ToLower(parsed.Hostname())
-	return host == "preloop.ai" || strings.HasSuffix(host, ".preloop.ai")
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return false
+	}
+	for _, endpoint := range []*url.URL{target, base} {
+		endpoint.Scheme = strings.ToLower(endpoint.Scheme)
+		if (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" {
+			return false
+		}
+	}
+	port := func(endpoint *url.URL) string {
+		if explicit := endpoint.Port(); explicit != "" {
+			return explicit
+		}
+		if endpoint.Scheme == "http" {
+			return "80"
+		}
+		return "443"
+	}
+	if target.Scheme != base.Scheme || !strings.EqualFold(target.Hostname(), base.Hostname()) || port(target) != port(base) {
+		return false
+	}
+	basePath := strings.TrimRight(base.Path, "/")
+	targetPath := strings.TrimRight(target.Path, "/")
+	return targetPath == basePath+"/mcp" || targetPath == basePath+"/mcp/v1"
 }
 
 func defaultStarterPolicyFileName(serverName string) string {

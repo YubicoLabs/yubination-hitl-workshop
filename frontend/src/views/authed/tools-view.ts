@@ -111,6 +111,9 @@ export class ToolsView extends LitElement {
   static styles = [
     unsafeCSS(consoleStyles),
     css`
+      [hidden] {
+        display: none !important;
+      }
       mcp-setup-dialog {
         display: contents;
       }
@@ -732,6 +735,44 @@ export class ToolsView extends LitElement {
       this.tools = tools as ToolWithRules[];
       this.mcpServers = servers;
       this.approvalPolicies = policies;
+      if (this.features.workshop_configuration_locked) {
+        // Presentation only: retain the bounded sources, never infer ownership
+        // from an editable display name or change the underlying catalog.
+        const workshopSources = servers.filter((server) => {
+          const marker = server.auth_config?.workshop_onboarding;
+          return (
+            server.status === 'active' &&
+            server.url === 'http://workshop.internal/bounded' &&
+            server.auth_type === 'none' &&
+            marker?.version === 'yubination-v2' &&
+            ['get_customer_status', 'set_customer_status'].includes(marker.tool)
+          );
+        });
+        this.tools = this.tools.filter((tool) =>
+          workshopSources.some(
+            (server) =>
+              tool.source === 'mcp' &&
+              tool.source_id === server.id &&
+              tool.name === server.auth_config?.workshop_onboarding?.tool
+          )
+        );
+        this.mcpServers = workshopSources.filter((server) =>
+          this.tools.some((tool) => tool.source_id === server.id)
+        );
+        const policyIds = new Set(
+          this.tools
+            .flatMap((tool) => [
+              tool.approval_workflow_id,
+              ...(tool.access_rules ?? []).map(
+                (rule) => rule.approval_workflow_id
+              ),
+            ])
+            .filter(Boolean)
+        );
+        this.approvalPolicies = policies.filter((policy) =>
+          policyIds.has(policy.id)
+        );
+      }
       this.hasDefaultAIModel = aiModels.some((model) => model.is_default);
 
       if (
@@ -756,7 +797,7 @@ export class ToolsView extends LitElement {
       console.error('Error loading tools data:', err);
     } finally {
       this.loading = false;
-      if (starterPolicyRequest) {
+      if (starterPolicyRequest && !this.configurationLocked) {
         void this._openStarterPolicySuggestion(starterPolicyRequest.serverId, {
           fallbackToLatest: starterPolicyRequest.fallbackToLatest,
         });
@@ -1765,6 +1806,10 @@ ${this._formatStarterPolicyDiffValue(change.new_value)}</pre
     `;
   }
 
+  private get configurationLocked() {
+    return this.features['workshop_configuration_locked'] === true;
+  }
+
   render() {
     const removedStarterPolicyChanges =
       this._getStarterPolicyDiffChanges('remove');
@@ -1772,7 +1817,7 @@ ${this._formatStarterPolicyDiffValue(change.new_value)}</pre
     return html`
       <view-header headerText="Tools" width="extra-wide">
         <div slot="main-column">
-          <sl-dropdown>
+          <sl-dropdown ?hidden=${this.loading || this.configurationLocked}>
             <sl-button slot="trigger" size="small" variant="primary" caret>
               <sl-icon slot="prefix" name="plus-lg"></sl-icon>
               Add Source
@@ -1789,7 +1834,10 @@ ${this._formatStarterPolicyDiffValue(change.new_value)}</pre
             </sl-menu>
           </sl-dropdown>
 
-          <sl-tooltip content="Import configuration from YAML">
+          <sl-tooltip
+            content="Import configuration from YAML"
+            ?hidden=${this.loading || this.configurationLocked}
+          >
             <sl-button size="small" @click=${this._triggerImport}>
               <sl-icon slot="prefix" name="upload"></sl-icon>
               Import
@@ -1811,13 +1859,19 @@ ${this._formatStarterPolicyDiffValue(change.new_value)}</pre
 
       <div class="column-layout extra-wide">
         <div class="main-column">
-          ${this.isAddingMCPServer
+          ${this.configurationLocked
+            ? html`<sl-alert open
+                >Workshop tools and approval policies are configured for this
+                exercise.</sl-alert
+              >`
+            : ''}
+          ${this.isAddingMCPServer && !this.configurationLocked
             ? html`<mcp-server-form
                 @server-added=${this._handleServerAdded}
                 @close-modal=${this._closeServerForm}
               ></mcp-server-form>`
             : ''}
-          ${this.editingMCPServer
+          ${this.editingMCPServer && !this.configurationLocked
             ? html`<mcp-server-form
                 .server=${this.editingMCPServer}
                 @server-updated=${this._handleServerUpdated}

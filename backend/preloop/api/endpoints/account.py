@@ -27,6 +27,10 @@ from preloop.models.crud import (
 from preloop.models.db.session import get_db_session
 from preloop.models.models.account import Account
 from preloop.models.models.user import User as UserModel
+from preloop.schemas.enrollment_metadata import (
+    control_validation_ready,
+    project_validation,
+)
 from preloop.schemas.gateway_usage import (
     AccountManagedAgentListResponse,
     AccountGatewayUsageSearchResponse,
@@ -112,6 +116,8 @@ def _managed_agent_onboarding_flags(
         else {}
     )
 
+    legacy_skip_reason = validation.get("live_validation_skip_reason")
+    validation = project_validation(validation, managed_config)
     mcp_proxy_configured = bool(
         validation.get("preloop_server_present")
         or validation.get("nested_mcp_servers_ok")
@@ -203,12 +209,17 @@ def _managed_agent_onboarding_flags(
             )
         )
     )
+    if any(
+        validation.get(key) is False
+        for key in ("preloop_server_present", "nested_mcp_servers_ok")
+    ):
+        mcp_proxy_configured = False
     live_validation_status = str(validation.get("live_validation_status") or "").strip()
     live_validation_failed = live_validation_status in {"failed", "throttled"}
     live_validation_missing_gateway = (
         live_validation_status == "not_run"
-        and isinstance(validation.get("live_validation_skip_reason"), str)
-        and "gateway token" in validation["live_validation_skip_reason"].lower()
+        and isinstance(legacy_skip_reason, str)
+        and "gateway token" in legacy_skip_reason.lower()
     )
     explicit_gateway_unavailable = (
         validation.get("gateway_provider_ok") is False
@@ -217,9 +228,9 @@ def _managed_agent_onboarding_flags(
         or validation.get("model_provider_rewritten") is False
         or validation.get("gateway_model_configured") is False
     )
-    if (live_validation_failed or live_validation_missing_gateway) and (
-        explicit_gateway_unavailable
-        or validation.get("live_validation_attempted") is True
+    if explicit_gateway_unavailable or (
+        (live_validation_failed or live_validation_missing_gateway)
+        and validation.get("live_validation_attempted") is True
     ):
         model_gateway_configured = False
 
@@ -452,19 +463,12 @@ def _managed_agent_control_config_flags(
         else {}
     )
 
-    validation_control_ready = bool(
-        validation.get("control_channel_configured")
-        or (
-            validation.get("control_plugin_verified")
-            and validation.get("control_ws_url_ok")
-            and validation.get("control_bearer_token_ok")
-        )
-    )
-    control_config = _managed_agent_control_config_from_managed_config(managed_config)
-    managed_control_ready = bool(
-        control_config.get("enabled") is True
-        and isinstance(control_config.get("control_ws_url"), str)
-        and control_config["control_ws_url"].strip()
+    validation = project_validation(validation, managed_config)
+    validation_control_ready = control_validation_ready(validation)
+    managed_control_ready = validation.get("control_config_present") is True or (
+        "control_config_present" not in validation
+        and validation.get("control_config_written") is True
+        and validation.get("control_ws_url_ok") is True
     )
 
     return validation_control_ready, managed_control_ready
@@ -1705,7 +1709,7 @@ async def delete_account_managed_agent(
 
 
 @router.get("/runtime-sessions", response_model=AccountRuntimeSessionListResponse)
-async def list_account_runtime_sessions(
+def list_account_runtime_sessions(
     account: Annotated[Account, Depends(get_account_for_user)],
     db: Session = Depends(get_db_session),
     query: Optional[str] = Query(None, min_length=1),
@@ -1733,7 +1737,7 @@ async def list_account_runtime_sessions(
     "/runtime-sessions/{runtime_session_id}",
     response_model=AccountRuntimeSessionDetailResponse,
 )
-async def get_account_runtime_session_detail(
+def get_account_runtime_session_detail(
     runtime_session_id: str,
     account: Annotated[Account, Depends(get_account_for_user)],
     db: Session = Depends(get_db_session),
@@ -1753,7 +1757,7 @@ async def get_account_runtime_session_detail(
     "/runtime-sessions/{runtime_session_id}/interactions",
     response_model=AccountGatewayUsageSearchResponse,
 )
-async def get_account_session_interactions(
+def get_account_session_interactions(
     runtime_session_id: str,
     account: Annotated[Account, Depends(get_account_for_user)],
     db: Session = Depends(get_db_session),
@@ -1779,7 +1783,7 @@ async def get_account_session_interactions(
     "/runtime-sessions/{runtime_session_id}/activity",
     response_model=RuntimeSessionActivityListResponse,
 )
-async def get_account_session_activity_timeline(
+def get_account_session_activity_timeline(
     runtime_session_id: str,
     account: Annotated[Account, Depends(get_account_for_user)],
     db: Session = Depends(get_db_session),
@@ -1810,7 +1814,7 @@ async def summarize_account_runtime_session(
 @router.get(
     "/runtime-sessions/{runtime_session_id}/gateway-events",
 )
-async def get_account_runtime_session_gateway_events(
+def get_account_runtime_session_gateway_events(
     runtime_session_id: str,
     account: Annotated[Account, Depends(get_account_for_user)],
     db: Session = Depends(get_db_session),
@@ -1874,7 +1878,7 @@ async def get_account_runtime_session_gateway_events(
 @router.get(
     "/runtime-sessions/{runtime_session_id}/gateway-events/{activity_id}",
 )
-async def get_account_runtime_session_gateway_event_detail(
+def get_account_runtime_session_gateway_event_detail(
     runtime_session_id: str,
     activity_id: str,
     account: Annotated[Account, Depends(get_account_for_user)],

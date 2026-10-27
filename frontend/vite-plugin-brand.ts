@@ -140,7 +140,8 @@ export function brandPlugin(
         contentBasePath,
         `${brandKey}/ai-act-readiness.md`
       );
-      const hasAiActReadinessPage = fs.existsSync(aiActReadinessMdPath);
+      const hasAiActReadinessPage =
+        !brandConfig.workshop && fs.existsSync(aiActReadinessMdPath);
       // Competitor comparison pages (/vs/<slug>) are SaaS-only.
       const vsSlugsForRouting =
         (brandConfig as any).edition === 'saas' || !(brandConfig as any).edition
@@ -217,6 +218,7 @@ export function brandPlugin(
       ];
 
       for (const file of contentFiles) {
+        if (brandConfig.workshop && file === 'ai-act-readiness.md') continue;
         const contentFilePath = path.resolve(
           contentBasePath,
           `${brandKey}/${file}`
@@ -286,7 +288,8 @@ export function brandPlugin(
         contentBasePath,
         `${brandKey}/ai-act-readiness.md`
       );
-      const hasAiActReadinessPage = fs.existsSync(aiActReadinessMdPath);
+      const hasAiActReadinessPage =
+        !brandConfig.workshop && fs.existsSync(aiActReadinessMdPath);
       const aiActReadinessHTML = hasAiActReadinessPage
         ? await loadMarkdownContent(
             contentBasePath,
@@ -610,6 +613,7 @@ export function brandPlugin(
       // Only includes styling/branding metadata, not SEO content
       const runtimeConfig = {
         name: brandConfig.name,
+        workshop: brandConfig.workshop,
         domain: brandConfig.domain,
         edition: (brandConfig as any).edition || 'saas', // Default to 'saas' for backwards compatibility
         branding: brandConfig.branding,

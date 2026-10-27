@@ -1,0 +1,106 @@
+{
+  "name": "workshop-local",
+  "services": {
+    "postgres": {
+      "image": "pgvector/pgvector:pg16",
+      "environment": {
+        "POSTGRES_USER": "workshop",
+        "POSTGRES_PASSWORD": "local-workshop-only",
+        "POSTGRES_DB": "preloop"
+      },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "postgres-data",
+          "target": "/var/lib/postgresql/data"
+        }
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U workshop -d preloop"
+        ],
+        "interval": "5s",
+        "timeout": "5s",
+        "retries": 20
+      }
+    },
+    "nats": {
+      "image": "nats:alpine",
+      "command": [
+        "-js",
+        "-sd",
+        "/data"
+      ],
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "nats-data",
+          "target": "/data"
+        }
+      ]
+    },
+    "api": {
+      "build": {
+        "context": ".",
+        "dockerfile": "docker/local/Dockerfile"
+      },
+      "depends_on": {
+        "postgres": {
+          "condition": "service_healthy"
+        },
+        "nats": {
+          "condition": "service_started"
+        }
+      },
+      "environment": {
+        "DATABASE_URL": "postgresql+psycopg://workshop:local-workshop-only@postgres/preloop",
+        "NATS_URL": "nats://nats:4222",
+        "HOST": "0.0.0.0",
+        "PORT": "8000",
+        "ENVIRONMENT": "development",
+        "SECRET_KEY": "local-workshop-only-not-for-network-deployment",
+        "REGISTRATION_ENABLED": "true",
+        "WORKSHOP_SIGNUP_CODE_REQUIRED": "false",
+        "WORKSHOP_ONBOARDING_ENABLED": "true",
+        "WEBAUTHN_RP_ID": "localhost",
+        "ALLOWED_ORIGINS": "http://localhost:${WORKSHOP_PORT:-8080},http://localhost:${WORKSHOP_API_PORT:-8000}",
+        "PRELOOP_URL": "http://localhost:${WORKSHOP_PORT:-8080}",
+        "PRELOOP_SERVICE_ROLE": "all",
+        "MDS_CACHE_DIR": "/var/cache/preloop/mds"
+      },
+      "ports": [
+        "127.0.0.1:${WORKSHOP_API_PORT:-8000}:8000"
+      ],
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "mds-cache",
+          "target": "/var/cache/preloop/mds"
+        }
+      ]
+    },
+    "console": {
+      "build": {
+        "context": "frontend",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": [
+        "api"
+      ],
+      "environment": {
+        "API_URL": "http://api:8000",
+        "GATEWAY_URL": "http://api:8000",
+        "MOCK_API": "false"
+      },
+      "ports": [
+        "127.0.0.1:${WORKSHOP_PORT:-8080}:80"
+      ]
+    }
+  },
+  "volumes": {
+    "postgres-data": {},
+    "nats-data": {},
+    "mds-cache": {}
+  }
+}

@@ -108,6 +108,10 @@
             font-size: 0.875rem;
             text-wrap: auto;
         }
+
+        .step-up-notice {
+            margin-bottom: 1rem;
+        }
     </style>
 </head>
 
@@ -115,7 +119,7 @@
     <div class="container">
         <sl-card>
             <div class="header">
-                <h1>⚠️ Tool Approval Required</h1>
+                <h1>&#9888;&#65039; Tool Approval Required</h1>
                 <p style="color: #6b7280; margin: 0;">Review and approve or decline this tool execution</p>
             </div>
 
@@ -133,6 +137,7 @@
             </div>
 
             <div id="content" style="display: none;">
+
                 <div class="info-grid">
                     <div class="info-item">
                         <div class="info-label">Status</div>
@@ -165,6 +170,30 @@
                         help-text="Add a comment explaining your decision" rows="3"></sl-textarea>
                 </div>
 
+                <!-- Step-up indicator — shown when hardware auth is required -->
+                <div id="step-up-notice" class="step-up-notice" style="display: none;">
+                    <div id="step-up-notice-key" style="display: none;">
+                        <sl-alert variant="neutral" open>
+                            <sl-icon slot="icon" name="shield-lock"></sl-icon>
+                            <strong>Hardware-backed authorization required</strong> — Your security key will be
+                            prompted when you click Approve.
+                        </sl-alert>
+                    </div>
+                    <div id="step-up-notice-no-key" style="display: none;">
+                        <sl-alert variant="danger" open>
+                            <sl-icon slot="icon" name="shield-exclamation"></sl-icon>
+                            <strong>Cannot approve</strong> — This action requires a registered security key.
+                            Visit Settings &rsaquo; Security to add one.
+                        </sl-alert>
+                    </div>
+                    <div id="step-up-error-inline" style="display: none;">
+                        <sl-alert variant="danger" open>
+                            <sl-icon slot="icon" name="exclamation-triangle"></sl-icon>
+                            <span id="step-up-error-inline-msg"></span>
+                        </sl-alert>
+                    </div>
+                </div>
+
                 <div class="actions" id="actions">
                     <sl-button variant="success" size="large" id="approve-btn">
                         <sl-icon slot="prefix" name="check-circle"></sl-icon>
@@ -188,18 +217,88 @@
     </div>
 
     <script>
+        // ---------------------------------------------------------------------------
+        // Bootstrap
+        // ---------------------------------------------------------------------------
         const urlParams = new URLSearchParams(window.location.search);
         const requestId = window.location.pathname.split('/').pop();
         const token = urlParams.get('token');
 
         let approvalData = null;
+        let uiState = 'loading';
 
+        // ---------------------------------------------------------------------------
+        // base64url helpers
+        // ---------------------------------------------------------------------------
+        function fromBase64Url(b64url) {
+            const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+            const pad = '='.repeat((4 - b64.length % 4) % 4);
+            return Uint8Array.from(atob(b64 + pad), c => c.charCodeAt(0));
+        }
+
+        function toBase64Url(uint8arr) {
+            return btoa(String.fromCharCode(...uint8arr))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        // ---------------------------------------------------------------------------
+        // Render
+        // ---------------------------------------------------------------------------
+        function setState(newState) {
+            uiState = newState;
+            render();
+        }
+
+        function render() {
+            document.getElementById('loading').style.display = uiState === 'loading' ? 'block' : 'none';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('content').style.display = uiState !== 'loading' ? 'block' : 'none';
+            if (uiState === 'loading') return;
+
+            const isDecided = approvalData &&
+                ['approved', 'declined', 'expired', 'cancelled'].includes(approvalData.status);
+
+            // Keep status badge in sync with approvalData (updated after /decide returns)
+            if (approvalData) {
+                const statusEl = document.getElementById('status');
+                statusEl.textContent = approvalData.status;
+                statusEl.className = `status-badge status-${approvalData.status}`;
+            }
+
+            document.getElementById('actions').style.display = isDecided ? 'none' : 'flex';
+            document.getElementById('comment-section').style.display = isDecided ? 'none' : 'block';
+
+            // Step-up indicator
+            const stepUpPending = approvalData && approvalData.step_up_required && !approvalData.step_up_verified;
+            const hasKey = approvalData && approvalData.has_registered_key;
+            const notice = document.getElementById('step-up-notice');
+            if (stepUpPending && !isDecided) {
+                notice.style.display = 'block';
+                document.getElementById('step-up-notice-key').style.display = hasKey ? 'block' : 'none';
+                document.getElementById('step-up-notice-no-key').style.display = hasKey ? 'none' : 'block';
+                document.getElementById('approve-btn').disabled = !hasKey;
+            } else {
+                notice.style.display = 'none';
+                document.getElementById('approve-btn').disabled = false;
+            }
+
+            // Already-decided alert
+            const resultEl = document.getElementById('result');
+            if (isDecided && resultEl.style.display === 'none') {
+                const alertEl = document.getElementById('result-alert');
+                alertEl.variant = approvalData.status === 'approved' ? 'success' : 'warning';
+                document.getElementById('result-title').textContent = `Request ${approvalData.status}`;
+                document.getElementById('result-message').textContent =
+                    `This approval request has already been ${approvalData.status}.`;
+                resultEl.style.display = 'block';
+            }
+        }
+
+        // ---------------------------------------------------------------------------
+        // Data loading
+        // ---------------------------------------------------------------------------
         function formatToolArgs(args) {
-            // Convert args to JSON string with proper formatting
             const jsonStr = JSON.stringify(args, null, 2);
-
-            // Replace escaped newlines with actual newlines for better readability
-            // This handles strings that contain \n, \r\n, etc.
             return jsonStr
                 .replace(/\\n/g, '\n')
                 .replace(/\\r/g, '\r')
@@ -208,61 +307,116 @@
 
         async function loadApproval() {
             try {
-                const response = await fetch(`/approval/${requestId}/data?token=${token}`);
-                if (!response.ok) {
-                    throw new Error('Failed to load approval request');
-                }
+                const response = await fetch(`/approval/${requestId}/data?token=${encodeURIComponent(token)}`);
+                if (!response.ok) throw new Error('Failed to load approval request');
                 approvalData = await response.json();
-                displayApproval();
-            } catch (error) {
-                showError(error.message);
+                populateContent();
+                setState(computeInitialState());
+            } catch (err) {
+                showError(err.message);
             }
         }
 
-        function displayApproval() {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('content').style.display = 'block';
+        function computeInitialState() {
+            return 'ready';
+        }
 
-            // Set status
+        function populateContent() {
             const statusEl = document.getElementById('status');
             statusEl.textContent = approvalData.status;
             statusEl.className = `status-badge status-${approvalData.status}`;
 
-            // Set tool info
             document.getElementById('tool-name').textContent = approvalData.tool_name;
-            document.getElementById('requested-at').textContent = new Date(approvalData.requested_at).toLocaleString();
+            document.getElementById('requested-at').textContent =
+                new Date(approvalData.requested_at).toLocaleString();
             document.getElementById('tool-args').textContent = formatToolArgs(approvalData.tool_args);
 
-            // Show reasoning if available
             if (approvalData.agent_reasoning) {
                 document.getElementById('reasoning-section').style.display = 'block';
                 document.getElementById('agent-reasoning').textContent = approvalData.agent_reasoning;
             }
-
-            // Hide actions if already resolved
-            if (['approved', 'declined', 'expired', 'cancelled'].includes(approvalData.status)) {
-                document.getElementById('actions').style.display = 'none';
-                document.getElementById('comment-section').style.display = 'none';
-                showResult(
-                    approvalData.status === 'approved' ? 'success' : 'warning',
-                    `Request ${approvalData.status}`,
-                    `This approval request has already been ${approvalData.status}.`
-                );
-            }
         }
 
+        // ---------------------------------------------------------------------------
+        // Step-up ceremony — throws on failure, sets approvalData.step_up_verified on success
+        // ---------------------------------------------------------------------------
+        async function runStepUpCeremony() {
+            // 1. Get challenge
+            const beginResp = await fetch(
+                `/approval/${requestId}/step-up/begin?token=${encodeURIComponent(token)}`,
+                { method: 'POST' }
+            );
+            if (!beginResp.ok) {
+                const err = await beginResp.json();
+                throw new Error(err.detail || 'Failed to start verification');
+            }
+            const { session_id, options } = await beginResp.json();
+
+            // 2. Build PublicKeyCredentialRequestOptions
+            const publicKey = {
+                challenge: fromBase64Url(options.challenge),
+                rpId: options.rpId,
+                userVerification: options.userVerification || 'required',
+                timeout: options.timeout || 60000,
+            };
+            if (options.allowCredentials && options.allowCredentials.length) {
+                publicKey.allowCredentials = options.allowCredentials.map(c => ({
+                    type: 'public-key',
+                    id: fromBase64Url(c.id),
+                }));
+            }
+
+            // 3. Browser WebAuthn call (native browser UI; throws NotAllowedError if cancelled)
+            const credential = await navigator.credentials.get({ publicKey });
+
+            // 4. Serialize response
+            const authResp = {
+                id: toBase64Url(new Uint8Array(credential.rawId)),
+                rawId: toBase64Url(new Uint8Array(credential.rawId)),
+                type: credential.type,
+                response: {
+                    clientDataJSON: toBase64Url(new Uint8Array(credential.response.clientDataJSON)),
+                    authenticatorData: toBase64Url(new Uint8Array(credential.response.authenticatorData)),
+                    signature: toBase64Url(new Uint8Array(credential.response.signature)),
+                    userHandle: credential.response.userHandle
+                        ? toBase64Url(new Uint8Array(credential.response.userHandle))
+                        : null,
+                },
+            };
+
+            // 5. Complete
+            const completeResp = await fetch(
+                `/approval/${requestId}/step-up/complete?token=${encodeURIComponent(token)}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id, response: authResp }),
+                }
+            );
+            if (!completeResp.ok) {
+                const err = await completeResp.json();
+                throw new Error(err.detail || 'Verification failed');
+            }
+
+            const { verified } = await completeResp.json();
+            if (!verified) throw new Error('Server did not confirm verification');
+            approvalData.step_up_verified = true;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Decision submission
+        // ---------------------------------------------------------------------------
         async function submitDecision(action) {
             const comment = document.getElementById('comment').value;
             const btn = document.getElementById(`${action}-btn`);
             btn.loading = true;
-
             try {
                 const response = await fetch(
-                    `/approval/${requestId}/decide?token=${token}`,
+                    `/approval/${requestId}/decide?token=${encodeURIComponent(token)}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action, comment: comment || null })
+                        body: JSON.stringify({ action, comment: comment || null }),
                     }
                 );
 
@@ -272,24 +426,24 @@
                 }
 
                 const result = await response.json();
+                approvalData.status = result.status;
+                setState('ready');
+                // Override the decided-alert text with a fresh-action message
                 showResult(
                     action === 'approve' ? 'success' : 'warning',
                     `Request ${action}d`,
                     `The tool execution has been ${action}d successfully.`
                 );
-                document.getElementById('actions').style.display = 'none';
-                document.getElementById('comment-section').style.display = 'none';
-
-                // Update status
-                approvalData.status = result.status;
-                displayApproval();
-            } catch (error) {
-                showError(error.message);
+            } catch (err) {
+                showError(err.message);
             } finally {
                 btn.loading = false;
             }
         }
 
+        // ---------------------------------------------------------------------------
+        // Display helpers
+        // ---------------------------------------------------------------------------
         function showResult(variant, title, message) {
             const alertEl = document.getElementById('result-alert');
             alertEl.variant = variant;
@@ -305,10 +459,37 @@
             document.getElementById('error').style.display = 'block';
         }
 
-        document.getElementById('approve-btn').addEventListener('click', () => submitDecision('approve'));
+        // ---------------------------------------------------------------------------
+        // Event listeners
+        // ---------------------------------------------------------------------------
+        document.getElementById('approve-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('approve-btn');
+            const inlineError = document.getElementById('step-up-error-inline');
+            inlineError.style.display = 'none';
+
+            if (approvalData && approvalData.step_up_required && !approvalData.step_up_verified) {
+                btn.loading = true;
+                try {
+                    await runStepUpCeremony();
+                    // Ceremony passed — step_up_verified is now true; re-render clears the notice
+                    render();
+                    await submitDecision('approve');
+                } catch (err) {
+                    const msg = err.name === 'NotAllowedError'
+                        ? 'Verification was cancelled — click Approve to try again.'
+                        : (err.message || 'Verification failed — click Approve to try again.');
+                    document.getElementById('step-up-error-inline-msg').textContent = msg;
+                    document.getElementById('step-up-notice').style.display = 'block';
+                    inlineError.style.display = 'block';
+                    btn.loading = false;
+                }
+            } else {
+                submitDecision('approve');
+            }
+        });
+
         document.getElementById('decline-btn').addEventListener('click', () => submitDecision('decline'));
 
-        // Load approval on page load
         loadApproval();
     </script>
 </body>

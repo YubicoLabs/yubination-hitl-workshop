@@ -1,3 +1,5 @@
+import { approvalDeadline } from '../utils/approval-time';
+import { formatRelativeTime } from '../utils/date';
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@shoelace-style/shoelace/dist/components/dropdown/dropdown.js';
@@ -38,6 +40,10 @@ interface ApprovalRequest {
   expires_at?: string;
   execution_id?: string;
   agent_reasoning?: string;
+  step_up_required?: boolean;
+  step_up_verified?: boolean;
+  step_up_protocol?: string | null;
+  approval_token?: string | null;
 }
 
 interface UserNotification {
@@ -56,6 +62,19 @@ interface UserNotification {
   metadata?: Record<string, unknown>;
 }
 
+// Bundle the essential header icon so it works without a remote icon CDN.
+const NOTIFICATION_ICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>'
+  );
+
+const PROFILE_ICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/><path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8m8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1"/></svg>'
+  );
+
 @customElement('console-header')
 export class ConsoleHeader extends LitElement {
   @state()
@@ -72,6 +91,12 @@ export class ConsoleHeader extends LitElement {
 
   @state()
   private _processingApproval: string | null = null;
+
+  @state()
+  private _passkeyNudge: 'none' | 'setup' | 'backup' = 'none';
+
+  private static readonly _NUDGE_SETUP_KEY = 'passkey-nudge-setup-dismissed';
+  private static readonly _NUDGE_BACKUP_KEY = 'passkey-nudge-backup-dismissed';
 
   private unsubscribeFlow?: () => void;
   private unsubscribeApprovals?: () => void;
@@ -262,10 +287,35 @@ export class ConsoleHeader extends LitElement {
     .theme-switcher-container {
       text-align: center;
     }
+    .passkey-nudge {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.5rem 1rem;
+      background: var(--sl-color-primary-50);
+      border-bottom: 1px solid var(--sl-color-primary-200);
+      font-size: var(--sl-font-size-small);
+      color: var(--sl-color-primary-900);
+    }
+    .passkey-nudge span {
+      flex: 1;
+    }
+    .passkey-nudge a {
+      color: var(--sl-color-primary-700);
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .passkey-nudge a:hover {
+      text-decoration: underline;
+    }
   `;
+
+  private timingInterval?: ReturnType<typeof setInterval>;
 
   async connectedCallback() {
     super.connectedCallback();
+    this.timingInterval = setInterval(() => this.requestUpdate(), 1000);
     this.fetchUserDetails();
     this.connectToFlowUpdates();
     this.connectToApprovalUpdates();
@@ -273,6 +323,7 @@ export class ConsoleHeader extends LitElement {
     this.loadRunningExecutions();
     this.loadPendingApprovals();
     this.loadUserNotifications();
+    this._checkPasskeyNudge();
     // Request desktop notification permission when console loads.
     // Browsers may require a user gesture; if so, user can click the bell icon.
     this.requestNotificationPermission();
@@ -280,6 +331,7 @@ export class ConsoleHeader extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearInterval(this.timingInterval);
     this.unsubscribeFlow?.();
     this.unsubscribeApprovals?.();
     this.unsubscribeNotifications?.();
@@ -308,6 +360,10 @@ export class ConsoleHeader extends LitElement {
         expires_at: approval.expires_at,
         execution_id: approval.execution_id,
         agent_reasoning: approval.agent_reasoning,
+        step_up_required: approval.step_up_required,
+        step_up_verified: approval.step_up_verified,
+        step_up_protocol: approval.step_up_protocol,
+        approval_token: approval.approval_token,
       }));
     } catch (error) {
       console.error('Failed to load pending approvals:', error);
@@ -325,8 +381,163 @@ export class ConsoleHeader extends LitElement {
     }
   }
 
+  private async _checkPasskeyNudge(): Promise<void> {
+    try {
+      const features = await api.getFeatures();
+      if (features.features['webauthn_login'] !== true) return;
+
+      const setupDismissed = localStorage.getItem(
+        ConsoleHeader._NUDGE_SETUP_KEY
+      );
+      const backupDismissed = localStorage.getItem(
+        ConsoleHeader._NUDGE_BACKUP_KEY
+      );
+
+      const resp = await api.fetchWithAuth('/api/v1/webauthn/credentials');
+      if (!resp.ok) return;
+      const creds: unknown[] = await resp.json();
+
+      if (creds.length === 0 && !setupDismissed) {
+        this._passkeyNudge = 'setup';
+      } else if (creds.length === 1 && !backupDismissed) {
+        this._passkeyNudge = 'backup';
+      }
+    } catch {
+      // Best-effort — never break the header
+    }
+  }
+
+  private _dismissNudge(): void {
+    const key =
+      this._passkeyNudge === 'setup'
+        ? ConsoleHeader._NUDGE_SETUP_KEY
+        : ConsoleHeader._NUDGE_BACKUP_KEY;
+    localStorage.setItem(key, '1');
+    this._passkeyNudge = 'none';
+  }
+
+  private _renderNudge() {
+    if (this._passkeyNudge === 'none') return '';
+    const message =
+      this._passkeyNudge === 'setup'
+        ? 'Secure your account with a passkey.'
+        : 'Add a backup passkey in case you lose access to your primary one.';
+    return html`
+      <div class="passkey-nudge">
+        <sl-icon name="key"></sl-icon>
+        <span>${message}</span>
+        <a
+          href="/console/settings/security"
+          @click=${(e: Event) => {
+            e.preventDefault();
+            Router.go('/console/settings/security');
+          }}
+          >Set up now →</a
+        >
+        <sl-icon-button
+          name="x-lg"
+          label="Dismiss"
+          @click=${this._dismissNudge}
+        ></sl-icon-button>
+      </div>
+    `;
+  }
+
+  private _fromBase64Url(b64url: string): Uint8Array {
+    const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    return Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0));
+  }
+
+  private _toBase64Url(buf: ArrayBuffer): string {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+  }
+
+  private async _runArkgCeremony(
+    approvalId: string,
+    token: string
+  ): Promise<void> {
+    const beginResp = await fetch(
+      `/approval/${approvalId}/step-up/arkg/begin?token=${encodeURIComponent(token)}`,
+      { method: 'POST' }
+    );
+    if (!beginResp.ok) {
+      const err = await beginResp.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to start ARKG verification');
+    }
+    const {
+      credential_id_b64,
+      seed_kh_b64,
+      additional_args_b64,
+      tbs_b64,
+      rp_id,
+    } = await beginResp.json();
+
+    const publicKey: PublicKeyCredentialRequestOptions = {
+      challenge: this._fromBase64Url(tbs_b64),
+      rpId: rp_id,
+      allowCredentials: [
+        { type: 'public-key', id: this._fromBase64Url(credential_id_b64) },
+      ],
+      timeout: 60000,
+      extensions: {
+        previewSign: {
+          signByCredential: {
+            [credential_id_b64]: {
+              keyHandle: this._fromBase64Url(seed_kh_b64),
+              tbs: this._fromBase64Url(tbs_b64),
+              additionalArgs: this._fromBase64Url(additional_args_b64),
+            },
+          },
+        },
+      } as AuthenticationExtensionsClientInputs,
+    };
+
+    const credential = (await navigator.credentials.get({
+      publicKey,
+    })) as PublicKeyCredential;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ext = (credential as any).getClientExtensionResults() as Record<
+      string,
+      unknown
+    >;
+    const previewResult = ext['previewSign'] as
+      | Record<string, unknown>
+      | undefined;
+    if (!previewResult?.['signature']) {
+      throw new Error(
+        'previewSign extension did not return a signature — YubiKey 5.8+ required'
+      );
+    }
+    const signatureB64 = this._toBase64Url(
+      previewResult['signature'] as ArrayBuffer
+    );
+
+    const completeResp = await fetch(
+      `/approval/${approvalId}/step-up/arkg/complete?token=${encodeURIComponent(token)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signature_b64: signatureB64 }),
+      }
+    );
+    if (!completeResp.ok) {
+      const err = await completeResp.json().catch(() => ({}));
+      throw new Error(err.detail || 'ARKG signature verification failed');
+    }
+  }
+
   private async handleApprove(approvalId: string, event: Event) {
     event.stopPropagation();
+    const approval = this._pendingApprovals.find((a) => a.id === approvalId);
+    if (approval?.step_up_required && !approval.step_up_verified) {
+      // Any unverified step-up requires the full ceremony UI on the detail page
+      window.location.href = `/console/approval/${approvalId}`;
+      return;
+    }
     this._processingApproval = approvalId;
     try {
       await api.approveRequest(approvalId);
@@ -773,19 +984,7 @@ export class ConsoleHeader extends LitElement {
   }
 
   private formatRelativeTime(dateString: string): string {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / 60000);
-
-    if (diffMinutes < 1) return 'just now';
-    if (diffMinutes < 60) return `${diffMinutes}m ago`;
-
-    const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays}d ago`;
+    return formatRelativeTime(dateString);
   }
 
   private navigateToExecution(executionId: string) {
@@ -863,8 +1062,8 @@ export class ConsoleHeader extends LitElement {
                 <div class="approval-time">
                   ${this.formatRelativeTime(approval.requested_at)}
                   ${approval.expires_at
-                    ? html` • Expires
-                      ${this.formatRelativeTime(approval.expires_at)}`
+                    ? html` •
+                      ${approvalDeadline(approval.expires_at, 'pending')}`
                     : ''}
                 </div>
                 <div class="approval-actions">
@@ -967,6 +1166,7 @@ export class ConsoleHeader extends LitElement {
       this._userNotifications.length > 0;
 
     return html`
+      ${this._renderNudge()}
       <div class="header-container">
         <div class="nav-toggle">
           <slot name="nav-toggle"></slot>
@@ -980,7 +1180,7 @@ export class ConsoleHeader extends LitElement {
               @click=${() => this.requestNotificationPermission()}
             >
               <sl-icon-button
-                name="bell"
+                .src=${NOTIFICATION_ICON}
                 label="Notifications"
               ></sl-icon-button>
               ${this.totalNotificationCount > 0
@@ -1005,7 +1205,7 @@ export class ConsoleHeader extends LitElement {
           <!-- User Menu -->
           <sl-dropdown distance="8">
             <sl-icon-button
-              name="person-circle"
+              .src=${PROFILE_ICON}
               slot="trigger"
               label="User Menu"
             ></sl-icon-button>
@@ -1025,7 +1225,7 @@ export class ConsoleHeader extends LitElement {
               <sl-menu-item
                 @click=${() => Router.go('/console/settings/profile')}
               >
-                <sl-icon name="person-circle" slot="prefix"></sl-icon>
+                <sl-icon .src=${PROFILE_ICON} slot="prefix"></sl-icon>
                 Profile
               </sl-menu-item>
               <sl-menu-item

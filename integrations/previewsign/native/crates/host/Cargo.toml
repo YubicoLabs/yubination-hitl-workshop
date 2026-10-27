@@ -1,0 +1,47 @@
+[package]
+name = "sign-extension-host"
+version = "0.1.0"
+edition = "2021"
+description = "Native messaging host for previewSign FIDO bridge"
+
+[[bin]]
+name = "sign-extension-host"
+path = "src/main.rs"
+
+[dependencies]
+sign-extension-protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_cbor = "0.11"
+sha2 = "0.10"
+base64 = "0.22"
+psl = "2"
+url = "2"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+yubikit = { git = "https://github.com/Yubico/yubikey-manager", branch = "experiment/rust", package = "yubikit" }
+libc = "0.2"
+aes-gcm = "0.10"
+flate2 = "1"
+rand = "0.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_System_Services",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
