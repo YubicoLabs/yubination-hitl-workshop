@@ -28,29 +28,26 @@ python3 --version
 
 The architecture must be `arm64`. Stop if a required command is missing; install it through the official link above. Do not change global Cargo settings or bypass browser/operating-system policy. The helper is a development build, not signed or notarized.
 
-Use the source repository linked in **Build from source (optional)** on the workshop page. If that link is unavailable, this source path is not available from the deployment yet. The participant download remains a separate path. Do not substitute an unrelated repository.
-
 ## Obtain the matching source
 
-Use the repository URL configured on the workshop page and its published
-source ref (full commit, published tag or branch). For a hosted package,
-its manifest's full `sourceRevision` identifies the matching source, not a current
-main link. In a terminal, choose a new checkout path:
+Use your current checkout, or clone the workshop (repository access is required
+while it is internal):
 
 ```sh
-printf 'Configured workshop repository URL: '
-IFS= read -r SOURCE_URL
-printf 'Published source ref: '
-IFS= read -r SOURCE_REF
-SOURCE_CHECKOUT="$HOME/PreviewSign-source"
-git clone "$SOURCE_URL" "$SOURCE_CHECKOUT"
-cd "$SOURCE_CHECKOUT"
-git checkout --detach "$SOURCE_REF"
+git clone https://github.com/YubicoLabs/yubination-hitl-workshop.git
+cd yubination-hitl-workshop
+```
+
+From your current or newly cloned checkout root:
+
+```sh
+SOURCE_CHECKOUT="$PWD"
 git rev-parse HEAD
 ```
 
-Stop on any failure. Compare HEAD with the selected published revision before building.
-The extension and native host must come from that same checkout. From that
+Build the extension and helper from this same checkout. If matching a separately
+supplied package, first check out its manifest's full `sourceRevision`; a current
+main link does not identify that package. Stop on any failure. From the
 repository root, choose a new scratch directory outside Git:
 
 ```sh
@@ -95,17 +92,13 @@ Do not include credentials, key
 handles, runtime logs or private build evidence in a distributed package.
 
 The source is in this checkout's `integrations/previewsign` directory. Its README,
-LICENSE and LICENSE-SCOPE.md describe the licensing scope. Use the
-repository configured on the workshop page; an internal development checkout is
-not an external participant download.
+LICENSE and LICENSE-SCOPE.md describe the licensing scope. See the [workshop README](../../../README.md) for local startup.
 
 ## Open the dedicated Chrome profile and load the extension
 
 Keep the installation in place until the exercise is finished. The native manifest
 is registered under `$BUILD_ROOT/temporary-chrome/NativeMessagingHosts`; Chrome
 must use that exact user-data directory. Do not register into your personal profile.
-The manual steps below are **not yet participant-rehearsed**. Prior engineering
-checks used automated unpacked-extension flags, not this manual UI sequence.
 
 Use the installed Google Chrome application with this dedicated profile:
 
@@ -118,7 +111,7 @@ If Google Chrome is absent, obtain the supported browser through the normal
 facilitator setup;
 do not substitute a personal profile or bypass browser policy.
 In that window, record whether Developer mode was on or off before changing it.
-Follow the same setup sequence shown in participant step 3 ([Chrome’s Load unpacked instructions](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked)):
+Follow ([Chrome’s Load unpacked instructions](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked)):
 
 1. **Developer mode**: enable it if it was off.
 2. **Load unpacked**: select this Chrome button.
@@ -152,8 +145,6 @@ This tests transport/version only;
 it does not register a key, sign, or establish readiness for a transaction. A
 missing host or error is a stop condition: check the exact profile, installed
 manifest path and matching helper; never fall back to an unverified signing result.
-This manual inspector sequence remains untested; the automated installed-browser
-health/removal seam has separate recorded evidence.
 
 ## Handoff to the workshop
 
@@ -230,8 +221,7 @@ python3 -I -S integrations/previewsign/scripts/package_macos_chrome.py remove \
 
 Preserve the dedicated profile and unrelated files. Preserve preexisting extensions, profiles, accounts,
 passkeys and approval history. Confirm
-ordinary WebAuthn works after removal as a separate manual acceptance check; this
-has not yet been qualified by the source-build smoke. Revoke any exercise-created
+ordinary WebAuthn works after removal as a separate manual acceptance check. Revoke any exercise-created
 API key through API Keys; do not remove other keys. No blanket profile deletion.
 
 ## This repository's RP source map
@@ -254,35 +244,6 @@ and `{previewSign: {signByCredential: {"<credential-id>": {keyHandle: "<opaque>"
 Actual browser inputs use binary buffers, not these display placeholders. Preserve
 protocol revision/algorithm distinctions; this P-256 additional proof is not ML-DSA.
 
-## Windows diagnostic build (runtime qualification pending)
+## Windows source build
 
-Windows runtime installation remains unqualified. The following diagnostic builds source only; consult `install_windows.py --help` for the explicit-path installation interface.
-
-Use Python 3.11 or newer, Rust with Cargo/rustup and the chosen MSVC target
-already installed, and a Visual Studio developer terminal with the corresponding
-MSVC linker and Windows SDK resource compiler on PATH. This driver installs no
-prerequisites. From the cloned repository root in that terminal:
-
-```powershell
-py -3 integrations/previewsign/scripts/build_windows.py --output C:\Temp\previewsign-build --target x86_64-pc-windows-msvc
-```
-
-The output must be a new directory outside this repository, with no symlink or
-reparse-point ancestors. Use an explicit aarch64-pc-windows-msvc target instead
-only when that is the intended machine/toolchain. Remove inherited Cargo/Rust
-build overrides named by preflight; values are not printed. The command uses
-fresh output/cargo-home and output/target directories, downloads locked public
-dependencies as needed, and builds only sign-extension-host and
-sign-extension-service. It never runs those executables.
-
-On success, report.json records the target, tool versions, unchanged lock and
-both executable hashes. Executables are under target/<target>/debug in the
-chosen output. build.log retains compiler output locally; inspect before sharing.
-Failed builds retain their owned output for diagnosis and return a nonzero
-status. Choose a new output for another run; there is no automatic cleanup.
-
-The subprocess tests cover simulated dispatch and real non-Windows refusal.
-Actual Windows compilation, Chrome registration, installation, helper health,
-manual PIN/touch and end-to-end proof/result verification remain unqualified.
-This is a developer build diagnostic, not Windows workshop automation.
-
+Use the [Windows source-build and installation guide](WINDOWS-SOURCE-REHEARSAL.md).

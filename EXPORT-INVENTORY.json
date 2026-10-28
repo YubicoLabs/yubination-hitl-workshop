@@ -5,7 +5,7 @@
   },
   {
     "path": ".github/workflows/source-checks.yml",
-    "sha256": "e8f9b9c055c86a33b71fb361cb690c368a13fbf2bdb9a30f1aff667b1edb9b73"
+    "sha256": "360cb74e2300c857838512284b2e064507b6bc015027fdbadbde6de5fa0967df"
   },
   {
     "path": "LICENSE",
@@ -13,7 +13,7 @@
   },
   {
     "path": "README.md",
-    "sha256": "4a07c061a5723e358b878b845819e7ccf8ab343bd3f206cec553d6a9861c8fbe"
+    "sha256": "8109a128ad48ba23a9d7353c4250c3412d1afcf1483d7821d4aca69c0cf7a374"
   },
   {
     "path": "VERSION",
@@ -1921,7 +1921,7 @@
   },
   {
     "path": "compose.json",
-    "sha256": "19ed941508c3d4e1fe10af78584d4fdbe5ba8f2ab712ac4e746e7969410278f5"
+    "sha256": "e74262648aafc4f563f945f0e6f477667b3f7da76bab831cf10392474d4e9a1b"
   },
   {
     "path": "docker/local/Dockerfile",
@@ -1949,7 +1949,7 @@
   },
   {
     "path": "frontend/Dockerfile",
-    "sha256": "18c4329427199312d173117ae63f1bee1fbefaa1eb2c3db7f7b6c3337c6f3cd9"
+    "sha256": "412af4931c2b0597594e8052a9d6927946ffca1d71c6fdf8542fab72d62ad6a8"
   },
   {
     "path": "frontend/brands.yaml",
@@ -2240,6 +2240,10 @@
     "sha256": "82041f128873fff99bf12c55dde2d052793f58cfe01fb00445581322ace93c2e"
   },
   {
+    "path": "frontend/public/images/yubination-workshop-share.png",
+    "sha256": "5d99388055b1eae023953b8fb2999a2805283989bd29abec4d0d0479ace98ffa"
+  },
+  {
     "path": "frontend/public/workshop/previewsign/chrome-developer-mode.png",
     "sha256": "ac926a426e26c185671630712f11081087639a6efc59fac62241ac00ce33493f"
   },
@@ -2264,6 +2268,10 @@
     "sha256": "d2c5e7488f947a18f5664d2d9d9805d29bd4a65c7c43aa87a922f2275c2fcf40"
   },
   {
+    "path": "frontend/public/workshop/source.json",
+    "sha256": "1c92cd7f3bd12754460022b4c2a0444d6345111881c1d6df5d24e23441f0f596"
+  },
+  {
     "path": "frontend/scripts/prepare-icons.mjs",
     "sha256": "6b6d1a5f1f5d93ad23e00e4ae1390c0a362071566e9547b0e80f66ecba488fa5"
   },
@@ -2273,11 +2281,11 @@
   },
   {
     "path": "frontend/src/brand-config.ts",
-    "sha256": "d89784c85831969c772e9a029e3b7eb79d04de9acaa14dcc7b05edc31bf29667"
+    "sha256": "26f0bdb95430e17a014a1b608d600d149e4a1aa65467c3ceaee9597457972843"
   },
   {
     "path": "frontend/src/brand-seo.ts",
-    "sha256": "cbda3569e615cb0be2e55437547b620670ee47ee2b280936ced837599fdf36de"
+    "sha256": "c8ba71ccab543c876a8a626271db05bfd6742505e754da768bcc1b841486e5cc"
   },
   {
     "path": "frontend/src/components/add-ai-model-modal.ts",
@@ -2373,7 +2381,7 @@
   },
   {
     "path": "frontend/src/components/mcp-setup-dialog.ts",
-    "sha256": "ebb1d1146d70a98e78f11fda2f2949ebf03bdc1a3e57f80a548a45ebc8ccf6f3"
+    "sha256": "aad572bc2345ee90b818cd7e5f8efaba16e8a7af1b42919eb6ad72979712e673"
   },
   {
     "path": "frontend/src/components/news-capsule.ts",
@@ -2817,11 +2825,11 @@
   },
   {
     "path": "frontend/src/views/authed/workshop-lab-view.ts",
-    "sha256": "2d49545362a17e2a70f075ca149b7812719a61771836bf5cf5075a65072d7f85"
+    "sha256": "d56e67ae856b3433942f0e68a9e3116746b6993005bf700e1db9994d792aa1dd"
   },
   {
     "path": "frontend/src/views/authed/yubination-workshop-view.ts",
-    "sha256": "adb487acd32d9da1d1fdea2bb2933905e086e3b39db0a2124af1c0334d92271e"
+    "sha256": "0c1d1afa0e36eda9570baae9c5dfc3d0051aa108f3cafb0ee09868d7a3082a09"
   },
   {
     "path": "frontend/src/views/public/delete-account-view.ts",
@@ -2881,7 +2889,7 @@
   },
   {
     "path": "frontend/vite-plugin-brand.ts",
-    "sha256": "8e5b99b58a600f2c37ca598d6c82e22dfa57ca517c79f17b3cdef9a2cb42d52a"
+    "sha256": "75a682ac1f4e82b1ce2372b88f33f913b6a538791d03a158b231d1cf99887f01"
   },
   {
     "path": "frontend/vite-plugin-landing.ts",
@@ -2909,11 +2917,15 @@
   },
   {
     "path": "integrations/previewsign/README.md",
-    "sha256": "3664648a8b8a6532be263c07d9fb4c6b0f1561c9d0e335671f079d6568891762"
+    "sha256": "f94e3c0e7a60849ee72a807f62ce23e96a218d8f57fdc1b5e72c6a50cf3af156"
   },
   {
     "path": "integrations/previewsign/docs/DEVELOPER-QUICKSTART.md",
-    "sha256": "e5f5051fb165f492872e0017c2aa5623fb2790eb2a65360f65a0e5238dd29fbe"
+    "sha256": "0a96b102194006effbaf5d541733f16a78bdd1c9d991dadd2a63c963f3e976ba"
+  },
+  {
+    "path": "integrations/previewsign/docs/WINDOWS-SOURCE-REHEARSAL.md",
+    "sha256": "b5141573847636117e1b1c05e6699a4d653f0524a6c916e807802e49cdc67b65"
   },
   {
     "path": "integrations/previewsign/extension/background.js",
@@ -3170,6 +3182,10 @@
   {
     "path": "pyproject.toml",
     "sha256": "135ddf240989b16fe85ec36df68b8b3ccb3858d6261e2c56d92b9d86623a155e"
+  },
+  {
+    "path": "scripts/check_participant_alignment.py",
+    "sha256": "e5c3f1a9349c6b6e50fd07fe92cb5d0c077abddd81ca62c06da15b92eff5d657"
   },
   {
     "path": "scripts/init_db.py",

@@ -83,7 +83,10 @@
     "console": {
       "build": {
         "context": "frontend",
-        "dockerfile": "Dockerfile"
+        "dockerfile": "Dockerfile",
+        "args": {
+          "WORKSHOP_ORIGIN": "http://localhost:${WORKSHOP_PORT:-8080}"
+        }
       },
       "depends_on": [
         "api"
