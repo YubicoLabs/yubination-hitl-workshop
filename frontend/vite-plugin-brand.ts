@@ -10,6 +10,7 @@ import {
   get_static_routes_with_options,
   get_structured_data_for_route,
   VS_PAGE_META,
+  validate_workshop_origin,
 } from './src/brand-seo';
 
 /**
@@ -94,6 +95,12 @@ export function brandPlugin(
       if (!brandConfig) {
         throw new Error(
           `Brand "${brandKey}" not found in brands.yaml. Available brands: ${Object.keys(brands.brands).join(', ')}`
+        );
+      }
+
+      if (brandConfig.workshop) {
+        brandConfig.workshop_origin = validate_workshop_origin(
+          process.env.WORKSHOP_ORIGIN
         );
       }
 
@@ -601,6 +608,7 @@ export function brandPlugin(
         `<meta name="twitter:creator" content="${brandConfig.social.twitter}">`
       );
 
+      html = rewriteWorkshopHead(html, route, brandConfig);
       html = upsertStructuredDataTag(html, route, brandConfig);
 
       // Replace favicon
@@ -846,6 +854,56 @@ async function generateSlottedContentForRoute(
   }
 }
 
+/** Workshop-only override shared by the index and generated static pages. */
+function rewriteWorkshopHead(
+  html: string,
+  route: string,
+  config: BrandConfig
+): string {
+  if (!config.workshop) return html;
+  const meta = get_meta_for_route(route, config);
+  const escape = (value: string): string =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  const values: Record<string, string> = {
+    description: meta.description,
+    keywords: meta.keywords,
+    'og:title': meta.og_title,
+    'og:description': meta.og_description,
+    'og:image': meta.og_image,
+    'og:url': get_canonical_url(route, config),
+    'og:site_name': 'YubiNation Workshop | Preloop',
+    'og:type': 'website',
+    'twitter:card': 'summary_large_image',
+    'twitter:title': meta.title,
+    'twitter:description': meta.description,
+    'twitter:image': meta.og_image,
+    'twitter:site': config.social?.twitter || '@PreloopAI',
+    'twitter:creator': config.social?.twitter || '@PreloopAI',
+  };
+  return html.replace(/<head\b[^>]*>[\s\S]*?<\/head>/i, (head) => {
+    head = head
+      .replace(/<title\b[^>]*>[\s\S]*?<\/title>/gi, '')
+      .replace(/<meta\b[^>]*>/gi, (tag) => {
+        const key = tag.match(/(?:name|property)\s*=\s*["']([^"']+)["']/i)?.[1];
+        return key && key in values ? '' : tag;
+      })
+      .replace(/<link\b[^>]*\brel=["']canonical["'][^>]*>/gi, '');
+    const tags = Object.entries(values).map(
+      ([key, value]) =>
+        `<meta ${key.startsWith('og:') ? 'property' : 'name'}="${key}" content="${escape(value)}">`
+    );
+    tags.push(
+      `<title>${escape(meta.title)}</title>`,
+      `<link rel="canonical" href="${escape(get_canonical_url(route, config))}">`
+    );
+    return head.replace(/<\/head>/i, `${tags.join('\n')}\n</head>`);
+  });
+}
+
 /**
  * Generate a full standalone HTML page for a route
  * Takes the base index.html and replaces meta tags and content for the route
@@ -931,6 +989,7 @@ function generateFullHtmlPage(
     `<meta name="twitter:image" content="${meta.og_image}">`
   );
 
+  html = rewriteWorkshopHead(html, route, config);
   html = upsertStructuredDataTag(html, route, config);
 
   // Replace <lit-app> with content-wrapped version. The pricing route is

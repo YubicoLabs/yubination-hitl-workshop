@@ -132,13 +132,26 @@ export function get_route_from_filename(filename: string): string {
 }
 
 export function get_canonical_url(route: string, config: BrandConfig): string {
-  return `https://${config.domain}${route}`;
+  return `${get_origin(config)}${route}`;
 }
 
 export function get_meta_for_route(
   route: string,
   config: BrandConfig
 ): RouteMeta {
+  if (config.workshop) {
+    const title = 'YubiNation Workshop | Preloop';
+    const description =
+      'Explore AI agent governance at the YubiNation Workshop with Preloop: human approvals, security keys, and verifiable audit trails.';
+    return {
+      title,
+      description,
+      keywords: 'YubiNation Workshop, Preloop, AI agent governance',
+      og_title: title,
+      og_description: description,
+      og_image: `${get_origin(config)}/images/yubination-workshop-share.png`,
+    };
+  }
   const meta = config.landing?.meta || {};
   const default_title = meta.title || config.name || 'Preloop';
   const default_description = meta.description || '';
@@ -302,7 +315,33 @@ type SchemaObject = Record<string, unknown>;
 const ORGANIZATION_ID_FRAGMENT = '#organization';
 const WEBSITE_ID_FRAGMENT = '#website';
 
+/** Unconfigured builds use relative URLs, preserving the serving origin. */
+export function validate_workshop_origin(value?: string): string {
+  if (!value) return '';
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('Invalid WORKSHOP_ORIGIN: expected an HTTP(S) origin');
+  }
+  if (
+    !/^https?:\/\/[^/\s?#@\\]+\/?$/.test(value) ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      'Invalid WORKSHOP_ORIGIN: no credentials, path, query or fragment allowed'
+    );
+  }
+  return url.origin;
+}
+
 function get_origin(config: BrandConfig): string {
+  if (config.workshop) return validate_workshop_origin(config.workshop_origin);
+
   return `https://${config.domain}`;
 }
 

@@ -164,15 +164,33 @@ export class MCPSetupDialog extends LitElement {
         @sl-hide=${() => this._handleClose()}
         style="--width: 65rem;"
       >
+        <h2 style="padding: 0 1.5rem;">Connect with an API key</h2>
+        <p style="padding: 0 1.5rem;">
+          The workshop MCP server and approval policy are already configured.
+          Create an API key in this same Preloop account and follow the selected
+          client’s instructions below. Curl demonstrates the protocol without an
+          AI agent.
+        </p>
+        <ide-setup-tabs
+          .configs=${governedClientConfigs}
+          defaultTab="codex-cli"
+          variant="modal"
+        ></ide-setup-tabs>
         <section
-          aria-label="Native onboarding (preferred)"
+          aria-label="Preloop native onboarding (optional)"
           style="padding: 1.5rem; background: var(--sl-color-neutral-0);"
         >
-          <h2>Native onboarding (preferred)</h2>
+          <h2>Preloop native onboarding (optional)</h2>
           <p>
-            Use the workshop checkout supplied by your facilitator. Install Go
-            and make, and sign in to Codex or Claude Code. From the checkout
-            folder, run <code>make -C cli build</code>. The output is
+            Native onboarding discovers existing MCP connections and connects
+            them through the Preloop proxy. It also works with the preconfigured
+            workshop server.
+          </p>
+          <p>
+            This optional path additionally requires Go 1.24+ and make. Use the
+            workshop checkout supplied by your facilitator and sign in to Codex
+            or Claude Code. From the checkout folder, run
+            <code>make -C cli build</code>. The output is
             <code>cli/build/preloop</code>. Use this workshop build; another
             installed Preloop version may not include these commands.
           </p>
@@ -257,21 +275,6 @@ export class MCPSetupDialog extends LitElement {
             connected tools before requesting any customer change.
           </p>
         </section>
-        <h2 style="padding: 0 1.5rem;">
-          Alternative: manual client setup or curl
-        </h2>
-        <p style="padding: 0 1.5rem;">
-          Use this alternative if native login is unavailable on this
-          deployment, including a Google sign-in redirect. Create an API key in
-          this same Preloop account and follow the selected client’s
-          instructions below. Do not replace a working native connection. Curl
-          demonstrates the protocol without an AI agent.
-        </p>
-        <ide-setup-tabs
-          .configs=${governedClientConfigs}
-          defaultTab="codex-cli"
-          variant="modal"
-        ></ide-setup-tabs>
       </sl-dialog>
     `;
   }

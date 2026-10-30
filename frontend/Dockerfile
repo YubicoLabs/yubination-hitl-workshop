@@ -11,6 +11,8 @@ COPY package*.json ./
 RUN npm ci --cache .npm --prefer-offline --ignore-scripts
 
 COPY . .
+ARG WORKSHOP_ORIGIN
+ENV WORKSHOP_ORIGIN=${WORKSHOP_ORIGIN}
 RUN npm run build
 
 # Stage 2: Serve with nginx

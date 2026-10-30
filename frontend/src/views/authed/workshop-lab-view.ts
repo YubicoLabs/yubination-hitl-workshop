@@ -1737,11 +1737,11 @@ otherwise: issue the existing session</pre
         objective:
           'Explore an additional signature in the same governed approval journey. Compare the signed inputs, algorithms and verification evidence.',
         prerequisites:
-          'Use Google Chrome desktop with permission to load an unpacked extension, a YubiKey with firmware 5.8 or later and PreviewSign support, and the matching native helper built with experimental Yubikit Rust. Windows installation and hardware testing are pending. A PQC-capable YubiKey alone does not establish PreviewSign support.',
+          'Use Google Chrome desktop with permission to load an unpacked extension, a YubiKey with firmware 5.8 or later and PreviewSign support, and the matching native helper built with experimental Yubikit Rust. A PQC-capable YubiKey alone does not establish PreviewSign support.',
         check:
           'Finish only when both WebAuthn and PreviewSign verification pass, the original tool returns the expected change, and an independent read shows VIP. The extra P-256 signature is not post-quantum.',
         readiness:
-          'Experimental • macOS Apple silicon. Windows testing is pending. Check existing credential readiness before touch; ready credentials need no new registration. A customer reset cannot add missing PreviewSign metadata.',
+          'This local distribution includes source only. Build the extension and matching helper using the instructions for your platform. Check existing credential readiness before touch; ready credentials need no new registration. A customer reset cannot add missing PreviewSign metadata.',
       },
       'python-fido2-ml-dsa': {
         title: 'Upgrade to a post-quantum passkey',
@@ -1791,7 +1791,7 @@ otherwise: issue the existing session</pre
                   !this.participantArtifact &&
                   !this.windowsArtifact &&
                   this.lab === 'previewsign'
-                ? 'No Mac download is available on this deployment. Windows testing is pending. Use the source-build instructions if available.'
+                ? 'This local distribution includes source only. Build the extension and matching helper using the instructions for your platform.'
                 : content.readiness}
           </p>`
         : ''}
@@ -1990,33 +1990,37 @@ otherwise: issue the existing session</pre
                   </p>`
                 : html`<p>
                     No Mac participant download is available on this deployment.
-                    The source-build guide is unavailable until this deployment
-                    provides its source repository. You cannot install from this
-                    page yet. Do not download an unrelated helper or start
-                    registration without the matching extension.
+                    Use the
+                    <a
+                      href="https://github.com/YubicoLabs/yubination-hitl-workshop/blob/main/integrations/previewsign/docs/DEVELOPER-QUICKSTART.md"
+                      >Mac source-build and installation guide</a
+                    >, also included in your checkout. Repository access is
+                    required while the repository is internal.
                   </p>`}
-            <p>
-              Only use the commands below after obtaining the matching package
-              and its expected SHA-256. If no download is available, ask the
-              release owner; screenshots are guidance, not evidence of package
-              availability.
-            </p>
-            ${this.renderCommand(`cd "$HOME/Downloads"
+            ${this.participantArtifact
+              ? html`
+                  <p>
+                    Only use the commands below after obtaining the matching
+                    package and its expected SHA-256. If no download is
+                    available, ask the release owner; screenshots are guidance,
+                    not evidence of package availability.
+                  </p>
+                  ${this.renderCommand(`cd "$HOME/Downloads"
 shasum -a 256 previewsign-macos-arm64.tar.gz`)}
-            <p>
-              Compare the entire checksum with Expected SHA-256 in the package
-              details. Stop on mismatch. Only after a match, extract and
-              install:
-            </p>
-            <p>
-              These commands unpack the files and register the packaged native
-              helper with Chrome, allowing only the workshop extension to call
-              it. They create a new folder at
-              <code>$HOME/PreviewSign-evaluation</code>. If it already exists,
-              the commands stop before changing it. Do not delete an existing
-              setup to retry.
-            </p>
-            ${this.renderCommand(`(
+                  <p>
+                    Compare the entire checksum with Expected SHA-256 in the
+                    package details. Stop on mismatch. Only after a match,
+                    extract and install:
+                  </p>
+                  <p>
+                    These commands unpack the files and register the packaged
+                    native helper with Chrome, allowing only the workshop
+                    extension to call it. They create a new folder at
+                    <code>$HOME/PreviewSign-evaluation</code>. If it already
+                    exists, the commands stop before changing it. Do not delete
+                    an existing setup to retry.
+                  </p>
+                  ${this.renderCommand(`(
 set -eu
 base="$HOME/PreviewSign-evaluation"
 mkdir "$base"
@@ -2044,27 +2048,29 @@ plutil -insert type -string stdio "$manifest"
 plutil -insert allowed_origins -json "[\\"chrome-extension://$extension_id/\\"]" "$manifest"
 plutil -convert json "$manifest"
 )`)}
-            <details>
-              <summary>Optional Python installer</summary>
-              <p>
-                Requires Python 3 installed separately. Use this only instead of
-                the manual setup, with a new destination. Follow the matching
-                Python cleanup below.
-              </p>
-              ${this.renderCommand(`cd "$HOME/Downloads"
+                  <details>
+                    <summary>Optional Python installer</summary>
+                    <p>
+                      Requires Python 3 installed separately. Use this only
+                      instead of the manual setup, with a new destination.
+                      Follow the matching Python cleanup below.
+                    </p>
+                    ${this.renderCommand(`cd "$HOME/Downloads"
 mkdir previewsign-evaluation
 tar -xzf previewsign-macos-arm64.tar.gz -C previewsign-evaluation
 cd previewsign-evaluation
 python3 -I -S install.py install --package "$PWD" --destination "$HOME/PreviewSign-evaluation/install" --chrome-user-data-dir "$HOME/PreviewSign-evaluation/chrome"`)}
-            </details>
-            <p>
-              Keep these dedicated paths; installation refuses collisions.
-              Connect only the intended YubiKey for the later action. Open the
-              dedicated browser:
-            </p>
-            ${this.renderCommand(
-              `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="$HOME/PreviewSign-evaluation/chrome"`
-            )}
+                  </details>
+                  <p>
+                    Keep these dedicated paths; installation refuses collisions.
+                    Connect only the intended YubiKey for the later action. Open
+                    the dedicated browser:
+                  </p>
+                  ${this.renderCommand(
+                    `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="$HOME/PreviewSign-evaluation/chrome"`
+                  )}
+                `
+              : ''}
           </sl-tab-panel>
           <sl-tab-panel
             name="windows"
@@ -2145,14 +2151,13 @@ Set-Location "$base\\install"
                     >
                   </p>
                   <p>
-                    Windows installation and hardware testing are pending.
-                    Developers can use the
+                    Build the extension and matching helper using the
                     ${this.sourceLink(
                       `blob/${this.previewSignSourceRef}/integrations/previewsign/docs/WINDOWS-SOURCE-REHEARSAL.md`,
-                      'Windows source rehearsal guide'
-                    )}
-                    to build from source, install and check helper connectivity.
-                    This is not a Windows participant release.
+                      'Windows source-build and installation guide'
+                    )}.
+                    Follow its build, installation and helper connectivity
+                    steps. No prebuilt Windows package is included.
                   </p>
                 `}
           </sl-tab-panel>
@@ -2182,8 +2187,8 @@ Set-Location "$base\\install"
             </ul>
             <p>
               If you downloaded a package, use its source revision. Otherwise
-              follow the source-build guide’s revision selection. If the source
-              or matching helper is unavailable, this path is not available yet.
+              use this checkout and follow the guide for your platform.
+              Repository access is required while the repository is internal.
             </p>
           </sl-tab-panel>
         </sl-tab-group>
@@ -2213,7 +2218,7 @@ Set-Location "$base\\install"
           <li>
             <strong>Select the installed extension folder.</strong>
             <div data-platform-folder>
-              ${this.previewSignPlatform === 'mac'
+              ${this.previewSignPlatform === 'mac' && this.participantArtifact
                 ? html`<p>
                       For the Mac archive, run this in Terminal and copy its
                       output:
@@ -2227,7 +2232,8 @@ Set-Location "$base\\install"
                       <code>$HOME</code> literally. Mac source builds use the
                       absolute folder printed by their guide.
                     </p>`
-                : this.previewSignPlatform === 'source'
+                : this.previewSignPlatform === 'source' ||
+                    this.previewSignPlatform === 'mac'
                   ? html`<p>
                       Select the installed extension folder printed by your
                       platform’s source-build guide.
@@ -2247,7 +2253,7 @@ Set-Location "$base\\install"
                     : html`<p>
                         Windows source builds: select the installed
                         <code>extension</code> folder printed by the Windows
-                        guide. The Windows download is not available yet.
+                        guide.
                       </p>`}
             </div>
             ${this.previewSignPlatform === 'mac'
@@ -2544,7 +2550,7 @@ Set-Location "$base\\install"
           'Remove button on the workshop extension card',
           'Remove only the workshop extension, then close the dedicated Chrome window.'
         )}
-        ${this.previewSignPlatform === 'mac'
+        ${this.previewSignPlatform === 'mac' && this.participantArtifact
           ? html`<div data-platform-cleanup="mac">
               <h3>Mac archive cleanup</h3>
               <p>
@@ -2578,7 +2584,8 @@ python3 -I -S install.py remove --destination "$HOME/PreviewSign-evaluation/inst
                 not the archive command.
               </p>
             </div>`
-          : this.previewSignPlatform === 'source'
+          : this.previewSignPlatform === 'source' ||
+              this.previewSignPlatform === 'mac'
             ? html`<div data-platform-cleanup="source">
                 <h3>Source-build cleanup</h3>
                 <p>

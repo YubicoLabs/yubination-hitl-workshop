@@ -892,11 +892,14 @@ export class YubiNationWorkshopView extends AuthedElement {
             <div>
               <h2>Connect your agent</h2>
               <p>
-                Choose Codex or Claude Code in client setup. Follow native
-                onboarding where supported, or use its manual API-key
-                alternative if native login is unavailable. Keep your existing
-                model sign-in and settings. In your client, inspect the prepared
-                tools and read your sample customer before requesting a change.
+                The workshop MCP server and approval policy are already
+                configured. Create an API key in this same account and follow
+                the selected Codex, Claude Code or curl instructions in client
+                setup. Curl demonstrates the protocol without an AI agent.
+                Preloop native onboarding is also available as an optional
+                setup. Keep your existing model sign-in and settings. In your
+                client, inspect the prepared tools and read your sample customer
+                before requesting a change.
               </p>
               <sl-button
                 id="client-setup"
@@ -907,17 +910,15 @@ export class YubiNationWorkshopView extends AuthedElement {
               >
               <ol>
                 <li>
-                  Choose one connection method in
-                  <strong>Set up your client</strong>: native onboarding with
-                  the supported workshop build, or the manual API-key setup for
-                  Codex or Claude Code. Keep a working connection; you do not
-                  need to set it up twice.
+                  Open <strong>Set up your client</strong> and choose Codex,
+                  Claude Code or curl.
                 </li>
                 <li>
-                  Follow only that method’s instructions. For native onboarding,
-                  review the proposed changes before applying them. For manual
-                  setup, use an API key from this signed-in account. Never paste
-                  credentials into an agent conversation or feedback.
+                  Follow only that method’s instructions. For API-key setup, use
+                  a key from this signed-in account. For optional native
+                  onboarding, review the proposed changes before applying them.
+                  Never paste credentials into an agent conversation or
+                  feedback.
                 </li>
                 <li>
                   Check that your client can see
@@ -932,7 +933,7 @@ export class YubiNationWorkshopView extends AuthedElement {
                 <p>
                   If either tool is missing, check your account and the
                   displayed endpoint, then ask the facilitator. If native
-                  onboarding is unavailable, use the manual client alternative
+                  onboarding is unavailable, use the API-key instructions first
                   in setup.
                 </p>
               </details>
@@ -940,7 +941,7 @@ export class YubiNationWorkshopView extends AuthedElement {
                 >Inspect tools and policy</sl-button
               >
               <section class="snapshot" aria-label="Test MCP connection">
-                <h3>Manual API-key connection test (alternative)</h3>
+                <h3>API-key connection test</h3>
                 <sl-button href="/console/settings/api-keys"
                   >Create an API key</sl-button
                 >

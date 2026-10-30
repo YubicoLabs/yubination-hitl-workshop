@@ -14,6 +14,14 @@ to VIP, approve it with a YubiKey, and confirm that the change happened.
   existing clone. Open a terminal in the folder containing `compose.json`.
   Git is needed only if you clone the repository.
 
+While the repository is internal, downloading or cloning requires repository access.
+Alternatively, clone it and enter the checkout:
+
+```sh
+git clone https://github.com/YubicoLabs/yubination-hitl-workshop.git
+cd yubination-hitl-workshop
+```
+
 The Docker commands below work in macOS terminals and Windows PowerShell.
 Python, Node.js and Go are not needed for this path.
 
@@ -67,6 +75,7 @@ hardware and browser requirements.
 - [CLI setup and onboarding](cli/README.md)
 - [PreviewSign developer quickstart](integrations/previewsign/docs/DEVELOPER-QUICKSTART.md)
   — source build; no prebuilt PreviewSign installers are included.
+- [PreviewSign Windows source guide](integrations/previewsign/docs/WINDOWS-SOURCE-REHEARSAL.md)
 - [Receipt lab and offline verification](docs/receipt-lab.md)
 
 ## Stop and resume
@@ -106,10 +115,10 @@ WORKSHOP_PORT=8081
 WORKSHOP_API_PORT=8001
 ```
 
-Apply the change:
+Rebuild to apply the port to both runtime and sharing URLs:
 
 ```sh
-docker compose -f compose.json up -d
+docker compose -f compose.json up --build -d
 ```
 
 Then open http://localhost:8081. Keep `localhost` as the hostname.
